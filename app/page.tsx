@@ -164,6 +164,7 @@ export default function SlopFactoryDashboard() {
   }
   const [storedSoraGenerations, setStoredSoraGenerations] = useState<SoraGeneration[]>([]);
   const [isLoadingSoraGenerations, setIsLoadingSoraGenerations] = useState(false);
+  const [isSoraLibraryExpanded, setIsSoraLibraryExpanded] = useState(false);
 
   const tabs = [
     { id: 'script', name: 'Script Creation', icon: FileText },
@@ -2285,6 +2286,160 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
         </div>
       </div>
 
+      {/* Sora Video Library - Collapsible */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+        <button
+          onClick={() => setIsSoraLibraryExpanded(!isSoraLibraryExpanded)}
+          className="w-full px-8 py-6 border-b border-gray-100 hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl flex items-center justify-center">
+                <Video className="w-5 h-5 text-white" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-xl font-semibold text-gray-900">Sora Video Library</h3>
+                <p className="text-sm text-gray-500">{storedSoraGenerations.length} generated videos</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  loadSoraGenerations();
+                }}
+                disabled={isLoadingSoraGenerations}
+                className="text-violet-600 hover:text-violet-700 font-medium text-sm flex items-center gap-1"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingSoraGenerations ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isSoraLibraryExpanded ? 'rotate-180' : ''}`} />
+            </div>
+          </div>
+        </button>
+        {isSoraLibraryExpanded && (
+          <div className="p-8">
+            {isLoadingSoraGenerations ? (
+              <div className="text-center py-8">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto text-violet-500 mb-2" />
+                <p className="text-sm text-gray-500">Loading videos...</p>
+              </div>
+            ) : storedSoraGenerations.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <Video className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                <h4 className="text-lg font-semibold text-gray-700 mb-2">No Videos Yet</h4>
+                <p className="text-sm">Generate Sora videos from the prompts above to see them here.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {storedSoraGenerations.map((gen) => (
+                  <div
+                    key={gen.id}
+                    className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+                  >
+                    {/* Video Preview Area */}
+                    <div className="aspect-[9/16] bg-gray-900 flex items-center justify-center relative max-h-80">
+                      {gen.raw_url ? (
+                        <video 
+                          src={gen.raw_url} 
+                          controls 
+                          className="w-full h-full object-contain"
+                          preload="metadata"
+                        />
+                      ) : gen.processing_status === 'raw' || gen.processing_status === 'completed' ? (
+                        <div className="text-center">
+                          <Play className="w-12 h-12 text-white/50 mx-auto mb-2" />
+                          <p className="text-white/70 text-xs">Video Ready (No URL)</p>
+                        </div>
+                      ) : gen.processing_status === 'generating' ? (
+                        <div className="text-center">
+                          <Loader2 className="w-8 h-8 animate-spin text-violet-400 mx-auto mb-2" />
+                          <p className="text-white/70 text-xs">Generating...</p>
+                        </div>
+                      ) : gen.processing_status === 'failed' ? (
+                        <div className="text-center">
+                          <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+                          <p className="text-red-400 text-xs">Failed</p>
+                        </div>
+                      ) : (
+                        <div className="text-center">
+                          <Clock className="w-8 h-8 text-amber-400 mx-auto mb-2" />
+                          <p className="text-white/70 text-xs">{gen.processing_status}</p>
+                        </div>
+                      )}
+                      {/* Status Badge */}
+                      <div className={`absolute top-2 right-2 px-2 py-1 rounded-full text-xs font-medium ${
+                        gen.processing_status === 'raw' || gen.processing_status === 'completed'
+                          ? 'bg-emerald-500 text-white'
+                          : gen.processing_status === 'generating'
+                          ? 'bg-blue-500 text-white'
+                          : gen.processing_status === 'failed'
+                          ? 'bg-red-500 text-white'
+                          : 'bg-amber-500 text-white'
+                      }`}>
+                        {gen.processing_status}
+                      </div>
+                    </div>
+                    {/* Video Info */}
+                    <div className="p-4">
+                      <p className="text-xs text-gray-500 mb-2 line-clamp-2">{gen.sora_prompt_used}</p>
+                      <div className="text-xs mb-2">
+                        <span className="text-gray-400">
+                          {new Date(gen.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <p className="text-xs font-mono text-gray-500 break-all mb-2">
+                        ID: {gen.sora_generation_id}
+                      </p>
+                      {/* View on Sora Link */}
+                      <a 
+                        href={`https://sora.com/library/${gen.sora_generation_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-violet-600 hover:text-violet-700 font-medium mb-2"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        View on Sora
+                      </a>
+                      {/* Download Button */}
+                      {(gen.processing_status === 'raw' || gen.processing_status === 'completed') && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/sora-videos/download', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ video_id: gen.sora_generation_id }),
+                              });
+                              if (res.ok) {
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `sora-${gen.sora_generation_id}.mp4`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }
+                            } catch (e) {
+                              console.error('Download failed:', e);
+                            }
+                          }}
+                          className="mt-2 w-full bg-violet-500 hover:bg-violet-600 text-white text-sm py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                          <ArrowRight className="w-4 h-4 rotate-90" />
+                          Download MP4
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Next Step */}
       <div className="flex justify-end">
         <button 
@@ -2300,155 +2455,13 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
 
   const videoEditingContent = (
     <div className="space-y-8">
-      {/* Sora Generations Library */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl flex items-center justify-center">
-                <Video className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900">Sora Video Library</h3>
-                <p className="text-sm text-gray-500">{storedSoraGenerations.length} generated videos</p>
-              </div>
-            </div>
-            <button
-              onClick={loadSoraGenerations}
-              disabled={isLoadingSoraGenerations}
-              className="text-violet-600 hover:text-violet-700 font-medium text-sm flex items-center gap-1"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoadingSoraGenerations ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-          </div>
-        </div>
-        <div className="p-8">
-          {isLoadingSoraGenerations ? (
-            <div className="text-center py-8">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto text-violet-500 mb-2" />
-              <p className="text-sm text-gray-500">Loading videos...</p>
-            </div>
-          ) : storedSoraGenerations.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <Video className="w-16 h-16 mx-auto mb-4 opacity-30" />
-              <h4 className="text-lg font-semibold text-gray-700 mb-2">No Videos Yet</h4>
-              <p className="text-sm">Generate Sora videos from the Script Creation tab to see them here.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {storedSoraGenerations.map((gen) => (
-                <div
-                  key={gen.id}
-                  className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
-                >
-                  {/* Video Preview Area */}
-                  <div className="aspect-[9/16] bg-gray-900 flex items-center justify-center relative max-h-80">
-                    {gen.raw_url ? (
-                      <video 
-                        src={gen.raw_url} 
-                        controls 
-                        className="w-full h-full object-contain"
-                        preload="metadata"
-                      />
-                    ) : gen.processing_status === 'raw' || gen.processing_status === 'completed' ? (
-                      <div className="text-center">
-                        <Play className="w-12 h-12 text-white/50 mx-auto mb-2" />
-                        <p className="text-white/70 text-xs">Video Ready (No URL)</p>
-                      </div>
-                    ) : gen.processing_status === 'generating' ? (
-                      <div className="text-center">
-                        <Loader2 className="w-8 h-8 animate-spin text-violet-400 mx-auto mb-2" />
-                        <p className="text-white/70 text-xs">Generating...</p>
-                      </div>
-                    ) : gen.processing_status === 'failed' ? (
-                      <div className="text-center">
-                        <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
-                        <p className="text-red-400 text-xs">Failed</p>
-                      </div>
-                    ) : (
-                      <div className="text-center">
-                        <Clock className="w-8 h-8 text-amber-400 mx-auto mb-2" />
-                        <p className="text-white/70 text-xs">{gen.processing_status}</p>
-                      </div>
-                    )}
-                    {/* Status Badge */}
-                    <div className={`absolute top-2 right-2 px-2 py-1 rounded-full text-xs font-medium ${
-                      gen.processing_status === 'raw' || gen.processing_status === 'completed'
-                        ? 'bg-emerald-500 text-white'
-                        : gen.processing_status === 'generating'
-                        ? 'bg-blue-500 text-white'
-                        : gen.processing_status === 'failed'
-                        ? 'bg-red-500 text-white'
-                        : 'bg-amber-500 text-white'
-                    }`}>
-                      {gen.processing_status}
-                    </div>
-                  </div>
-                  {/* Video Info */}
-                  <div className="p-4">
-                    <p className="text-xs text-gray-500 mb-2 line-clamp-2">{gen.sora_prompt_used}</p>
-                    <div className="text-xs mb-2">
-                      <span className="text-gray-400">
-                        {new Date(gen.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <p className="text-xs font-mono text-gray-500 break-all mb-2">
-                      ID: {gen.sora_generation_id}
-                    </p>
-                    {/* View on Sora Link */}
-                    <a 
-                      href={`https://sora.com/library/${gen.sora_generation_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-violet-600 hover:text-violet-700 font-medium mb-2"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      View on Sora
-                    </a>
-                    {/* Download Button */}
-                    {(gen.processing_status === 'raw' || gen.processing_status === 'completed') && (
-                      <button
-                        onClick={async () => {
-                          try {
-                            const res = await fetch('/api/sora-videos/download', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ video_id: gen.sora_generation_id }),
-                            });
-                            if (res.ok) {
-                              const blob = await res.blob();
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = `sora-${gen.sora_generation_id}.mp4`;
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            }
-                          } catch (e) {
-                            console.error('Download failed:', e);
-                          }
-                        }}
-                        className="mt-2 w-full bg-violet-500 hover:bg-violet-600 text-white text-sm py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                      >
-                        <ArrowRight className="w-4 h-4 rotate-90" />
-                        Download MP4
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Video Editing Tools Coming Soon */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
         <div className="text-center py-8 text-gray-500">
           <Layers className="w-12 h-12 mx-auto mb-4 opacity-30" />
           <h3 className="text-lg font-semibold text-gray-700 mb-2">Video Editing Tools Coming Soon</h3>
           <p className="text-sm">Combine videos, add captions, B-roll, and audio in the next phase.</p>
+          <p className="text-xs text-gray-400 mt-2">View your generated videos in the Script Creation tab.</p>
         </div>
       </div>
     </div>

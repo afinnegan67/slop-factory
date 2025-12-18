@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     
     if (!ELEVENLABS_API_KEY) {
       return NextResponse.json({ 
-        error: 'ElevenLabs API key not configured. Add ELEVENLABS_API_KEY to your .env.local file and restart the dev server.' 
+        error: 'ElevenLabs API key not configured. Add ELEVENLABS_API_KEY to your .env file and restart the dev server.' 
       }, { status: 500 });
     }
     
