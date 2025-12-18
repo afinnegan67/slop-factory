@@ -171,3 +171,69 @@ export interface ComboPerformance {
   best_performing_video_id: string | null;
   updated_at: string;
 }
+
+export interface MediaLibraryAsset {
+  id: string;
+  asset_type: 'background_music' | 'sound_effect';
+  name: string;
+  description: string | null;
+  file_url: string;
+  duration_seconds: number | null;
+  tags: string[] | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface ProductDemoAsset {
+  id: string;
+  product_id: string;
+  demo_video_url: string;
+  demo_type: 'main' | 'feature_highlight' | 'testimonial';
+  duration_seconds: number | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface EditorPackage {
+  id: string;
+  batch_id: string;
+  package_data: {
+    batch_id: string;
+    video_assets: {
+      visual_hook: string;
+      pain_story: string;
+      cta_closer: string;
+      product_demo: string;
+    };
+    audio: {
+      voiceover: string;
+      background_music_options: Array<{ id: string; name: string; url: string; tags: string[] }>;
+    };
+    sound_effects: Array<{ id: string; name: string; url: string; tags: string[] }>;
+    script_timeline: {
+      visceral_hook: { text: string; start_time: number; end_time: number; video_clip: string };
+      pain_elaboration: { text: string; start_time: number; end_time: number; video_clip: string };
+      solution_intro: { text: string; start_time: number; end_time: number; video_clip: string };
+      product_pitch: { text: string; start_time: number; end_time: number; video_clip: string };
+      price_reveal: { text: string; start_time: number; end_time: number; video_clip: string };
+      cta: { text: string; start_time: number; end_time: number; video_clip: string };
+    };
+    product: {
+      name: string;
+      price_display: string;
+      guarantees: string[];
+    };
+    overlays: {
+      opening_callout: string;
+      pricing_graphics: {
+        price: string;
+        lifetime_access: boolean;
+        no_subscription: boolean;
+      };
+    };
+  };
+  status: 'ready' | 'editing' | 'complete' | 'failed';
+  created_at: string;
+  completed_at: string | null;
+}

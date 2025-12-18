@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Play, Video, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, ThumbsUp, Loader2, X, ImageIcon, Sparkles, ChevronDown, Save, ExternalLink } from 'lucide-react';
+import { Play, Video, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, ThumbsUp, Loader2, X, ImageIcon, Sparkles, ChevronDown, Save, ExternalLink, Package, Music, Volume2, Film, CheckCircle2, Circle } from 'lucide-react';
 
 // Types matching new schema
 interface PainPoint {
@@ -166,8 +166,42 @@ export default function SlopFactoryDashboard() {
   const [isLoadingSoraGenerations, setIsLoadingSoraGenerations] = useState(false);
   const [isSoraLibraryExpanded, setIsSoraLibraryExpanded] = useState(false);
 
+  // Asset Checklist state
+  interface AssetChecklist {
+    sora_videos: {
+      ready: boolean;
+      count: number;
+      required: number;
+      videos: Array<{ id: string; sora_generation_id: string; status: string; url: string | null; prompt_preview: string }>;
+    };
+    voiceover: {
+      ready: boolean;
+      url: string | null;
+    };
+    product_demo: {
+      ready: boolean;
+      product_name: string | null;
+      url: string | null;
+    };
+    background_music: {
+      ready: boolean;
+      count: number;
+      tracks: Array<{ id: string; name: string; url: string }>;
+    };
+    sound_effects: {
+      ready: boolean;
+      count: number;
+      effects: Array<{ id: string; name: string; url: string }>;
+    };
+  }
+  const [assetChecklist, setAssetChecklist] = useState<AssetChecklist | null>(null);
+  const [isLoadingChecklist, setIsLoadingChecklist] = useState(false);
+  const [isChecklistExpanded, setIsChecklistExpanded] = useState(true);
+  const [isInitializingEditor, setIsInitializingEditor] = useState(false);
+  const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+
   const tabs = [
-    { id: 'script', name: 'Script Creation', icon: FileText },
+    { id: 'script', name: 'Asset Creation', icon: FileText },
     { id: 'video', name: 'Video Editing', icon: Video },
     { id: 'meta', name: 'Meta', icon: Facebook }
   ];
@@ -202,6 +236,49 @@ export default function SlopFactoryDashboard() {
       console.error('Failed to load sora generations:', e);
     } finally {
       setIsLoadingSoraGenerations(false);
+    }
+  };
+
+  // Load asset checklist for editor preparation
+  const loadAssetChecklist = async (batchId: string) => {
+    setIsLoadingChecklist(true);
+    try {
+      const res = await fetch(`/api/editor/prepare-package?batch_id=${batchId}`);
+      const data = await res.json();
+      if (data.checklist) {
+        setAssetChecklist(data.checklist);
+        setCurrentBatchId(batchId);
+      }
+    } catch (e) {
+      console.error('Failed to load asset checklist:', e);
+    } finally {
+      setIsLoadingChecklist(false);
+    }
+  };
+
+  // Initialize editor with prepared package
+  const initializeEditor = async () => {
+    if (!currentBatchId) return;
+    
+    setIsInitializingEditor(true);
+    try {
+      const res = await fetch('/api/editor/prepare-package', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: currentBatchId })
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        // Navigate to video editing tab
+        setActiveTab('video');
+      } else {
+        console.error('Failed to initialize editor:', data.error);
+      }
+    } catch (e) {
+      console.error('Failed to initialize editor:', e);
+    } finally {
+      setIsInitializingEditor(false);
     }
   };
 
@@ -2440,9 +2517,276 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
         )}
       </div>
 
+      {/* Asset Checklist for Editor */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+        <button
+          onClick={() => setIsChecklistExpanded(!isChecklistExpanded)}
+          className="w-full px-8 py-6 border-b border-gray-100 hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center">
+                <Package className="w-5 h-5 text-white" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-xl font-semibold text-gray-900">Editor Asset Checklist</h3>
+                <p className="text-sm text-gray-500">
+                  {assetChecklist ? (
+                    assetChecklist.sora_videos.ready && assetChecklist.voiceover.ready && assetChecklist.background_music.ready && assetChecklist.sound_effects.ready
+                      ? '✅ All assets ready for editing'
+                      : '⏳ Some assets still needed'
+                  ) : 'Click to check asset status'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Use the first batch ID from sora generations or a mock ID
+                  const batchId = storedSoraGenerations[0]?.id || 'test-batch';
+                  loadAssetChecklist(batchId);
+                }}
+                disabled={isLoadingChecklist}
+                className="text-emerald-600 hover:text-emerald-700 font-medium text-sm flex items-center gap-1"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingChecklist ? 'animate-spin' : ''}`} />
+                Check Status
+              </button>
+              <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isChecklistExpanded ? 'rotate-180' : ''}`} />
+            </div>
+          </div>
+        </button>
+        
+        {isChecklistExpanded && (
+          <div className="p-8">
+            {isLoadingChecklist ? (
+              <div className="text-center py-8">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-500 mb-2" />
+                <p className="text-sm text-gray-500">Checking assets...</p>
+              </div>
+            ) : !assetChecklist ? (
+              <div className="text-center py-8 text-gray-500">
+                <Package className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                <h4 className="text-lg font-semibold text-gray-700 mb-2">Check Your Assets</h4>
+                <p className="text-sm mb-4">Click "Check Status" to verify all assets are ready for video editing.</p>
+                <button
+                  onClick={() => {
+                    const batchId = storedSoraGenerations[0]?.id || 'test-batch';
+                    loadAssetChecklist(batchId);
+                  }}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+                >
+                  Check Asset Status
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Sora Videos Section */}
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Video className="w-5 h-5 text-violet-500" />
+                      <h4 className="font-semibold text-gray-900">Sora Videos ({assetChecklist.sora_videos.count}/{assetChecklist.sora_videos.required})</h4>
+                    </div>
+                    {assetChecklist.sora_videos.ready ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    ) : (
+                      <Circle className="w-5 h-5 text-gray-300" />
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {assetChecklist.sora_videos.videos.length > 0 ? (
+                      assetChecklist.sora_videos.videos.map((video, idx) => (
+                        <div key={video.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${
+                              video.status === 'processed' || video.status === 'raw' || video.status === 'completed'
+                                ? 'bg-emerald-500'
+                                : video.status === 'generating'
+                                ? 'bg-blue-500 animate-pulse'
+                                : 'bg-gray-300'
+                            }`} />
+                            <span className="text-sm text-gray-700">
+                              {idx === 0 ? 'Visual Hook' : idx === 1 ? 'Pain Story' : 'CTA Closer'}
+                            </span>
+                            <span className="text-xs text-gray-400">({video.status})</span>
+                          </div>
+                          {video.url && (
+                            <a
+                              href={video.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-violet-600 hover:text-violet-700 font-medium flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Preview
+                            </a>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">No Sora videos generated yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Audio Section */}
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Mic className="w-5 h-5 text-orange-500" />
+                      <h4 className="font-semibold text-gray-900">Voiceover Audio</h4>
+                    </div>
+                    {assetChecklist.voiceover.ready ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    ) : (
+                      <Circle className="w-5 h-5 text-gray-300" />
+                    )}
+                  </div>
+                  {assetChecklist.voiceover.ready ? (
+                    <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                      <span className="text-sm text-gray-700">ElevenLabs Voiceover</span>
+                      {assetChecklist.voiceover.url && (
+                        <a
+                          href={assetChecklist.voiceover.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-orange-600 hover:text-orange-700 font-medium flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          Preview
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 italic">Generate voiceover from your script above</p>
+                  )}
+                </div>
+
+                {/* Product Demo Section */}
+                <div className="border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Film className="w-5 h-5 text-blue-500" />
+                      <h4 className="font-semibold text-gray-900">Product Demo</h4>
+                    </div>
+                    {assetChecklist.product_demo.ready ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    ) : (
+                      <Circle className="w-5 h-5 text-amber-400" />
+                    )}
+                  </div>
+                  {assetChecklist.product_demo.ready ? (
+                    <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                      <span className="text-sm text-gray-700">{assetChecklist.product_demo.product_name || 'Product Demo'}</span>
+                      {assetChecklist.product_demo.url && (
+                        <a
+                          href={assetChecklist.product_demo.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          Preview
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-amber-600 italic">Optional - Product demo video not configured</p>
+                  )}
+                </div>
+
+                {/* Media Library Section */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Background Music */}
+                  <div className="border border-gray-200 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Music className="w-5 h-5 text-pink-500" />
+                        <h4 className="font-semibold text-gray-900">Background Music</h4>
+                      </div>
+                      {assetChecklist.background_music.ready ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                      ) : (
+                        <Circle className="w-5 h-5 text-gray-300" />
+                      )}
+                    </div>
+                    {assetChecklist.background_music.ready ? (
+                      <p className="text-sm text-gray-600">{assetChecklist.background_music.count} tracks available</p>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">No background music uploaded</p>
+                    )}
+                  </div>
+
+                  {/* Sound Effects */}
+                  <div className="border border-gray-200 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Volume2 className="w-5 h-5 text-cyan-500" />
+                        <h4 className="font-semibold text-gray-900">Sound Effects</h4>
+                      </div>
+                      {assetChecklist.sound_effects.ready ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                      ) : (
+                        <Circle className="w-5 h-5 text-gray-300" />
+                      )}
+                    </div>
+                    {assetChecklist.sound_effects.ready ? (
+                      <p className="text-sm text-gray-600">{assetChecklist.sound_effects.count} effects available</p>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">No sound effects uploaded</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Initialize Editing Button */}
+                <div className="pt-4 border-t border-gray-200">
+                  <button
+                    onClick={initializeEditor}
+                    disabled={
+                      isInitializingEditor ||
+                      !assetChecklist.sora_videos.ready ||
+                      !assetChecklist.voiceover.ready ||
+                      !assetChecklist.background_music.ready ||
+                      !assetChecklist.sound_effects.ready
+                    }
+                    className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-200 flex items-center justify-center gap-3 ${
+                      assetChecklist.sora_videos.ready &&
+                      assetChecklist.voiceover.ready &&
+                      assetChecklist.background_music.ready &&
+                      assetChecklist.sound_effects.ready
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:shadow-lg hover:scale-[1.02]'
+                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {isInitializingEditor ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Preparing Editor Package...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-5 h-5" />
+                        Initialize Video Editing
+                      </>
+                    )}
+                  </button>
+                  {!(assetChecklist.sora_videos.ready && assetChecklist.voiceover.ready && assetChecklist.background_music.ready && assetChecklist.sound_effects.ready) && (
+                    <p className="text-center text-sm text-gray-500 mt-2">
+                      Complete all required assets above to enable editing
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Next Step */}
       <div className="flex justify-end">
-        <button 
+        <button
           onClick={() => setActiveTab('video')}
           className="bg-gray-900 text-white px-8 py-4 rounded-xl font-semibold hover:bg-gray-800 hover:shadow-lg transition-all duration-200 flex items-center space-x-3"
         >

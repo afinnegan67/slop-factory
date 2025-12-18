@@ -186,4 +186,61 @@ CREATE POLICY "Allow all" ON visual_hooks FOR ALL USING (true);
 CREATE POLICY "Allow all" ON products FOR ALL USING (true);
 CREATE POLICY "Allow all" ON scripts FOR ALL USING (true);
 
+-- ============================================
+-- 6. MEDIA LIBRARY TABLE
+-- Background music & sound effects catalog
+-- ============================================
+CREATE TABLE IF NOT EXISTS media_library (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_type VARCHAR(50) NOT NULL, -- 'background_music', 'sound_effect'
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_url TEXT NOT NULL,
+    duration_seconds DECIMAL(10,2),
+    tags TEXT[], -- Array of tags like 'upbeat', 'dramatic', 'whoosh'
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================
+-- 7. PRODUCT DEMO ASSETS TABLE
+-- Product demo videos linked to products
+-- ============================================
+CREATE TABLE IF NOT EXISTS product_demo_assets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+    demo_video_url TEXT NOT NULL,
+    demo_type VARCHAR(50) DEFAULT 'main', -- 'main', 'feature_highlight', 'testimonial'
+    duration_seconds DECIMAL(10,2),
+    description TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================
+-- 8. EDITOR PACKAGES TABLE
+-- Complete packages for video editor agent
+-- ============================================
+CREATE TABLE IF NOT EXISTS editor_packages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(id) ON DELETE CASCADE,
+    package_data JSONB NOT NULL, -- Store the entire package structure
+    status VARCHAR(50) DEFAULT 'ready', -- 'ready', 'editing', 'complete', 'failed'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Enable RLS on new tables
+ALTER TABLE media_library ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_demo_assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE editor_packages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow all" ON media_library FOR ALL USING (true);
+CREATE POLICY "Allow all" ON product_demo_assets FOR ALL USING (true);
+CREATE POLICY "Allow all" ON editor_packages FOR ALL USING (true);
+
+-- Indexes for new tables
+CREATE INDEX IF NOT EXISTS idx_media_library_type ON media_library(asset_type);
+CREATE INDEX IF NOT EXISTS idx_product_demo_product ON product_demo_assets(product_id);
+CREATE INDEX IF NOT EXISTS idx_editor_packages_batch ON editor_packages(batch_id);
 
