@@ -1,32 +1,39 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Play, Sparkles, Video, Upload, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, Eye, ThumbsUp, Loader2, X, ImageIcon } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Play, Video, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, ThumbsUp, Loader2, X, ImageIcon, Sparkles, ChevronDown, Save } from 'lucide-react';
 
-// Types
-interface PainAngle {
+// Types matching new schema
+interface PainPoint {
   id: string;
   title: string;
   description: string;
-  visceral_phrase: string | null;
-  category: string | null;
-  intensity_score: number | null;
-  is_approved: boolean;
-  times_used: number;
+  visceral_trigger: string;
+  emotional_impact_score: number | null;
+  usage_count: number;
+  is_active: boolean;
 }
 
-interface VisualHook {
+interface Product {
   id: string;
-  pain_angle_id: string;
-  scene_description: string;
-  scene_setting: string;
-  scene_mood: string;
-  headline_text: string;
-  subheadline_text: string;
-  cta_text: string;
-  spoken_script: string;
-  voice_tone: string;
-  status: string;
+  name: string;
+  price_cents: number;
+  value_proposition: string;
+  key_features: Record<string, unknown> | null;
+  guarantees: string[] | null;
+  is_active: boolean;
+}
+
+interface HookBrief {
+  id: string;
+  batch_id: string;
+  title: string;
+  visual_description: string;
+  spoken_hook: string;
+  text_overlay: string;
+  copy_super: string;
+  product_name?: string;
+  product_id?: string;
 }
 
 export default function SlopFactoryDashboard() {
@@ -35,13 +42,27 @@ export default function SlopFactoryDashboard() {
   // Research state
   const [researchTopic, setResearchTopic] = useState('');
   const [isResearching, setIsResearching] = useState(false);
-  const [painAngles, setPainAngles] = useState<PainAngle[]>([]);
-  const [selectedAngle, setSelectedAngle] = useState<PainAngle | null>(null);
+  const [researchStatus, setResearchStatus] = useState('');
+  const [researchOutput, setResearchOutput] = useState('');
+  const [extractedPainPoints, setExtractedPainPoints] = useState<PainPoint[]>([]);
+  const [researchError, setResearchError] = useState<string | null>(null);
+  const researchOutputRef = useRef<HTMLDivElement>(null);
   
-  // Visual hook state
-  const [isGeneratingHook, setIsGeneratingHook] = useState(false);
-  const [generatedHook, setGeneratedHook] = useState<VisualHook | null>(null);
-  const [showHookModal, setShowHookModal] = useState(false);
+  // Pain points & products state
+  const [savedPainPoints, setSavedPainPoints] = useState<PainPoint[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedPainPoint, setSelectedPainPoint] = useState<PainPoint | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedExtractedIndexes, setSelectedExtractedIndexes] = useState<Set<number>>(new Set());
+  
+  // Hook brief state
+  const [isGeneratingBriefs, setIsGeneratingBriefs] = useState(false);
+  const [briefsOutput, setBriefsOutput] = useState('');
+  const [generatedBriefs, setGeneratedBriefs] = useState<HookBrief[]>([]);
+  const [briefsStatus, setBriefsStatus] = useState('');
+  const [editableBriefs, setEditableBriefs] = useState<HookBrief[]>([]);
+  const [selectedBriefIndexes, setSelectedBriefIndexes] = useState<Set<number>>(new Set());
+  const briefsCarouselRef = useRef<HTMLDivElement>(null);
 
   const tabs = [
     { id: 'script', name: 'Script Creation', icon: FileText },
@@ -49,88 +70,376 @@ export default function SlopFactoryDashboard() {
     { id: 'meta', name: 'Meta', icon: Facebook }
   ];
 
-  // Start deep research
+  // Load products and saved pain points on mount
+  useEffect(() => {
+    loadProducts();
+    loadPainPoints();
+  }, []);
+
+  const loadProducts = async () => {
+    try {
+      const res = await fetch('/api/products');
+      const data = await res.json();
+      if (data.products) setProducts(data.products);
+    } catch (e) {
+      console.error('Failed to load products:', e);
+    }
+  };
+
+  const loadPainPoints = async () => {
+    try {
+      const res = await fetch('/api/pain-points');
+      const data = await res.json();
+      if (data.pain_points) setSavedPainPoints(data.pain_points);
+    } catch (e) {
+      console.error('Failed to load pain points:', e);
+    }
+  };
+
+  // Auto-scroll research output
+  useEffect(() => {
+    if (researchOutputRef.current) {
+      researchOutputRef.current.scrollTop = researchOutputRef.current.scrollHeight;
+    }
+  }, [researchOutput]);
+
+  // Research mode toggle
+  const [useDeepResearch, setUseDeepResearch] = useState(true);
+  const [researchInputMode, setResearchInputMode] = useState<'generate' | 'upload'>('generate');
+  const [uploadedResearch, setUploadedResearch] = useState('');
+
+  // Stream research from an endpoint
+  const streamResearch = async (endpoint: string) => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: researchTopic,
+        targetAudience: 'residential contractors'
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to start research');
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    let hasError = false;
+    let errorMessage = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            
+            switch (data.type) {
+              case 'status':
+                setResearchStatus(data.message);
+                break;
+              case 'research_chunk':
+                setResearchOutput(prev => prev + data.content);
+                break;
+              case 'pain_points':
+                setExtractedPainPoints(data.data);
+                break;
+              case 'error':
+                hasError = true;
+                errorMessage = data.message;
+                break;
+              case 'complete':
+                setResearchStatus(data.message || '✅ Research complete!');
+                break;
+            }
+          } catch (e) {
+            // Ignore parse errors for incomplete chunks
+          }
+        }
+      }
+    }
+
+    if (hasError) {
+      throw new Error(errorMessage);
+    }
+  };
+
+  // Start streaming research
   const startResearch = async () => {
     if (!researchTopic.trim()) return;
     
     setIsResearching(true);
+    setResearchError(null);
+    setResearchOutput('');
+    setExtractedPainPoints([]);
+    setResearchStatus('Starting...');
+
     try {
-      const response = await fetch('/api/research/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic: researchTopic,
-          targetAudience: 'residential contractors',
-          researchDepth: 'comprehensive'
-        })
-      });
-      
-      const data = await response.json();
-      if (data.pain_angles) {
-        setPainAngles(data.pain_angles);
-      }
+      const endpoint = useDeepResearch ? '/api/research/stream' : '/api/research/fallback';
+      setResearchStatus(useDeepResearch 
+        ? '🚀 Starting OpenAI Deep Research (this will take 5-15 minutes)...' 
+        : '⚡ Starting GPT-4o research...'
+      );
+      await streamResearch(endpoint);
     } catch (error) {
       console.error('Research failed:', error);
+      setResearchError(error instanceof Error ? error.message : 'Research failed');
     } finally {
       setIsResearching(false);
     }
   };
 
-  // Generate visual hook for a pain angle
-  const generateVisualHook = async (painAngle: PainAngle) => {
-    setSelectedAngle(painAngle);
-    setIsGeneratingHook(true);
-    setShowHookModal(true);
+  // Process uploaded/pasted research text
+  const processUploadedResearch = async () => {
+    if (!uploadedResearch.trim()) return;
     
+    setIsResearching(true);
+    setResearchError(null);
+    setResearchOutput(uploadedResearch);
+    setExtractedPainPoints([]);
+    setResearchStatus('🎯 Extracting pain points from uploaded research...');
+
     try {
-      const response = await fetch('/api/hooks/generate', {
+      const response = await fetch('/api/research/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pain_angle_id: painAngle.id })
+        body: JSON.stringify({ research: uploadedResearch })
       });
-      
+
       const data = await response.json();
-      if (data.visual_hook) {
-        setGeneratedHook(data.visual_hook);
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to extract pain points');
+      }
+
+      if (data.pain_points) {
+        setExtractedPainPoints(data.pain_points);
+        setResearchStatus(`✅ Extracted ${data.pain_points.length} pain points from your research!`);
       }
     } catch (error) {
-      console.error('Hook generation failed:', error);
+      console.error('Extraction failed:', error);
+      setResearchError(error instanceof Error ? error.message : 'Extraction failed');
     } finally {
-      setIsGeneratingHook(false);
+      setIsResearching(false);
     }
   };
 
-  // Approve a pain angle
-  const approvePainAngle = async (id: string) => {
+  // Toggle selection of an extracted pain point
+  const togglePainPointSelection = (index: number) => {
+    setSelectedExtractedIndexes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  // Select/deselect all pain points
+  const toggleSelectAll = () => {
+    if (selectedExtractedIndexes.size === extractedPainPoints.length) {
+      setSelectedExtractedIndexes(new Set());
+    } else {
+      setSelectedExtractedIndexes(new Set(extractedPainPoints.map((_, i) => i)));
+    }
+  };
+
+  // Save selected pain points to database
+  const savePainPoints = async () => {
+    if (selectedExtractedIndexes.size === 0) return;
+
+    const selectedPoints = extractedPainPoints.filter((_, i) => selectedExtractedIndexes.has(i));
+
     try {
-      await fetch('/api/research/angles', {
-        method: 'PATCH',
+      const res = await fetch('/api/pain-points', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, is_approved: true })
+        body: JSON.stringify({ pain_points: selectedPoints })
       });
-      
-      setPainAngles(prev => prev.map(a => 
-        a.id === id ? { ...a, is_approved: true } : a
-      ));
-    } catch (error) {
-      console.error('Failed to approve:', error);
+
+      const data = await res.json();
+      if (data.success) {
+        setSavedPainPoints(prev => [...data.pain_points, ...prev]);
+        // Remove saved points from extracted list
+        setExtractedPainPoints(prev => prev.filter((_, i) => !selectedExtractedIndexes.has(i)));
+        setSelectedExtractedIndexes(new Set());
+        setResearchStatus(`✅ Saved ${selectedPoints.length} pain points to database!`);
+      }
+    } catch (e) {
+      console.error('Failed to save pain points:', e);
     }
   };
 
-  const getCategoryColor = (category: string | null) => {
-    const colors: Record<string, string> = {
-      financial: 'bg-green-100 text-green-700',
-      time: 'bg-blue-100 text-blue-700',
-      family: 'bg-pink-100 text-pink-700',
-      stress: 'bg-orange-100 text-orange-700',
-      reputation: 'bg-purple-100 text-purple-700'
-    };
-    return colors[category || ''] || 'bg-gray-100 text-gray-700';
+  // Generate hook briefs
+  const generateHookBriefs = async () => {
+    if (!selectedPainPoint || !selectedProduct) return;
+
+    setIsGeneratingBriefs(true);
+    setBriefsOutput('');
+    setGeneratedBriefs([]);
+    setBriefsStatus('Starting...');
+
+    try {
+      const response = await fetch('/api/hook-briefs/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pain_point_id: selectedPainPoint.id,
+          product_id: selectedProduct.id
+        })
+      });
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) throw new Error('No response body');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              switch (data.type) {
+                case 'status':
+                  setBriefsStatus(data.message);
+                  break;
+                case 'generation_chunk':
+                  setBriefsOutput(prev => prev + data.content);
+                  break;
+                case 'complete':
+                  // Add product info to each brief
+                  const briefsWithProduct = (data.hook_briefs || []).map((brief: HookBrief) => ({
+                    ...brief,
+                    product_name: selectedProduct?.name,
+                    product_id: selectedProduct?.id
+                  }));
+                  setGeneratedBriefs(briefsWithProduct);
+                  setEditableBriefs(briefsWithProduct);
+                  setSelectedBriefIndexes(new Set());
+                  setBriefsStatus(data.message);
+                  break;
+                case 'error':
+                  setBriefsStatus(`❌ ${data.message}`);
+                  break;
+              }
+            } catch (e) {
+              // Ignore parse errors
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Brief generation failed:', error);
+      setBriefsStatus('❌ Generation failed');
+    } finally {
+      setIsGeneratingBriefs(false);
+    }
   };
 
-  const ScriptCreationTab = () => (
+  // Update an editable brief field
+  const updateBriefField = (index: number, field: keyof HookBrief, value: string) => {
+    setEditableBriefs(prev => prev.map((brief, i) => 
+      i === index ? { ...brief, [field]: value } : brief
+    ));
+  };
+
+  // Toggle brief selection
+  const toggleBriefSelection = (index: number) => {
+    setSelectedBriefIndexes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  // Store selected hook briefs
+  const storeHookBriefs = async () => {
+    const selectedBriefs = editableBriefs.filter((_, i) => selectedBriefIndexes.has(i));
+    if (selectedBriefs.length === 0) {
+      setBriefsStatus('⚠️ Please select at least one hook brief to store');
+      return;
+    }
+
+    if (!selectedPainPoint || !selectedProduct) {
+      setBriefsStatus('⚠️ Please select a pain point and product first');
+      return;
+    }
+
+    setBriefsStatus('💾 Storing hook briefs...');
+    
+    try {
+      const res = await fetch('/api/hook-briefs/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          briefs: selectedBriefs.map(b => ({
+            title: b.title,
+            visual_description: b.visual_description,
+            spoken_hook: b.spoken_hook,
+            text_overlay: b.text_overlay,
+            copy_super: b.copy_super,
+            ai_generated_version: b
+          })),
+          batch_id: selectedBriefs[0]?.batch_id,
+          pain_point_id: selectedPainPoint.id,
+          product_id: selectedProduct.id
+        })
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to save');
+      }
+
+      const data = await res.json();
+      setBriefsStatus(`✅ Stored ${data.saved_count} hook briefs to database!`);
+      // Remove stored briefs from the list
+      setEditableBriefs(prev => prev.filter((_, i) => !selectedBriefIndexes.has(i)));
+      setSelectedBriefIndexes(new Set());
+    } catch (e) {
+      console.error('Failed to store briefs:', e);
+      setBriefsStatus(`❌ Failed to store hook briefs: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
+  };
+
+  // Scroll carousel
+  const scrollCarousel = (direction: 'left' | 'right') => {
+    if (briefsCarouselRef.current) {
+      const scrollAmount = 400;
+      briefsCarouselRef.current.scrollBy({
+        left: direction === 'left' ? -scrollAmount : scrollAmount,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  const scriptCreationContent = (
     <div className="space-y-8">
-      {/* Pain Research Section - NEW */}
+      {/* Deep Research Section */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
         <div className="px-8 py-6 border-b border-gray-100">
           <div className="flex items-center space-x-3">
@@ -138,126 +447,263 @@ export default function SlopFactoryDashboard() {
               <Brain className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h3 className="text-xl font-semibold text-gray-900">Pain Point Research</h3>
-              <p className="text-sm text-gray-500">AI-powered deep research to uncover visceral contractor pain angles</p>
+              <h3 className="text-xl font-semibold text-gray-900">Deep Research</h3>
+              <p className="text-sm text-gray-500">Watch ChatGPT research contractor pain points in real-time</p>
             </div>
           </div>
         </div>
         <div className="p-8">
-          {/* Research Input */}
-          <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-6 text-white mb-6">
-            <h4 className="font-semibold mb-2">🔬 Deep Research Mode</h4>
-            <p className="text-sm text-blue-100 mb-4">Enter a topic and ChatGPT will conduct comprehensive research, then extract the most visceral pain angles.</p>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={researchTopic}
-                onChange={(e) => setResearchTopic(e.target.value)}
-                placeholder="e.g., Change orders and scope creep frustrations"
-                className="flex-1 px-4 py-3 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-white"
-                onKeyDown={(e) => e.key === 'Enter' && startResearch()}
-              />
-              <button
-                onClick={startResearch}
-                disabled={isResearching || !researchTopic.trim()}
-                className="bg-white text-blue-600 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isResearching ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Researching...</span>
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-5 h-5" />
-                    <span>Start Research</span>
-                  </>
-                )}
-              </button>
-            </div>
+          {/* Research Input Mode Tabs */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setResearchInputMode('generate')}
+              className={`px-4 py-2 rounded-xl font-medium transition-all ${
+                researchInputMode === 'generate'
+                  ? 'bg-indigo-600 text-white shadow-lg'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              🔬 Generate Research
+            </button>
+            <button
+              onClick={() => setResearchInputMode('upload')}
+              className={`px-4 py-2 rounded-xl font-medium transition-all ${
+                researchInputMode === 'upload'
+                  ? 'bg-indigo-600 text-white shadow-lg'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              📄 Upload Research
+            </button>
           </div>
 
-          {/* Research Progress */}
-          {isResearching && (
-            <div className="bg-gradient-to-r from-gray-50 to-gray-100/30 rounded-2xl p-6 mb-6">
-              <div className="flex items-center space-x-3 mb-4">
-                <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
-                <span className="font-semibold text-gray-900">Deep Research in Progress...</span>
+          {/* Generate Research Mode */}
+          {researchInputMode === 'generate' && (
+            <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl p-6 text-white mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold flex items-center gap-2">
+                  <Search className="w-5 h-5" />
+                  Research Topic
+                </h4>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-indigo-200">Mode:</span>
+                  <button
+                    onClick={() => setUseDeepResearch(!useDeepResearch)}
+                    className={`text-xs px-3 py-1 rounded-full transition-all ${
+                      useDeepResearch 
+                        ? 'bg-white text-indigo-600 font-semibold' 
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    {useDeepResearch ? '🔬 Deep Research' : '⚡ GPT-4o Fast'}
+                  </button>
+                </div>
               </div>
-              <div className="space-y-2 text-sm text-gray-600">
-                <p>✓ Analyzing contractor frustrations...</p>
-                <p>✓ Identifying emotional triggers...</p>
-                <p className="text-indigo-600">→ Extracting visceral pain angles...</p>
+              <p className="text-sm text-indigo-100 mb-4">
+                {useDeepResearch 
+                  ? 'Uses o4-mini-deep-research with web search (5-15 min, searches the web)' 
+                  : 'Uses GPT-4o without web search (faster, uses training data)'}
+              </p>
+              <div className="flex gap-3">
+                <input
+                  key="research-topic-input"
+                  id="research-topic-input"
+                  type="text"
+                  value={researchTopic}
+                  onChange={(e) => setResearchTopic(e.target.value)}
+                  placeholder="e.g., Change orders and scope creep"
+                  className="flex-1 px-4 py-3 rounded-xl bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-white border-0"
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    e.nativeEvent.stopImmediatePropagation();
+                    if (e.key === 'Enter' && !isResearching) startResearch();
+                  }}
+                  onKeyUp={(e) => {
+                    e.stopPropagation();
+                    e.nativeEvent.stopImmediatePropagation();
+                  }}
+                  onKeyPress={(e) => {
+                    e.stopPropagation();
+                    e.nativeEvent.stopImmediatePropagation();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={startResearch}
+                  disabled={isResearching || !researchTopic.trim()}
+                  className="bg-white text-indigo-600 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isResearching ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Researching...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-5 h-5" />
+                      <span>Start Research</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           )}
 
-          {/* Pain Angles Grid */}
-          {painAngles.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-semibold text-gray-900 flex items-center space-x-2">
-                  <Activity className="w-4 h-4 text-indigo-600" />
-                  <span>Discovered Pain Angles ({painAngles.length})</span>
-                </h4>
-                <span className="text-sm text-gray-500">Click to generate visual hooks</span>
+          {/* Upload Research Mode */}
+          {researchInputMode === 'upload' && (
+            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-2xl p-6 text-white mb-6">
+              <h4 className="font-semibold mb-2 flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Paste Deep Research Output
+              </h4>
+              <p className="text-sm text-emerald-100 mb-4">
+                Paste the full text from a completed ChatGPT Deep Research session. We'll extract the pain points automatically.
+              </p>
+              <textarea
+                key="upload-research-textarea"
+                id="upload-research-textarea"
+                value={uploadedResearch}
+                onChange={(e) => setUploadedResearch(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
+                }}
+                onKeyUp={(e) => {
+                  e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
+                }}
+                onKeyPress={(e) => {
+                  e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
+                }}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Paste your deep research output here...
+
+Example: Copy the full response from ChatGPT Deep Research including all the pain points, scenarios, and insights it found."
+                className="w-full h-48 px-4 py-3 rounded-xl bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-white border-0 resize-none font-mono text-sm"
+                autoComplete="off"
+              />
+              <div className="flex items-center justify-between mt-4">
+                <span className="text-sm text-emerald-200">
+                  {uploadedResearch.length > 0 ? `${uploadedResearch.length.toLocaleString()} characters` : 'No text pasted yet'}
+                </span>
+                <button
+                  type="button"
+                  onClick={processUploadedResearch}
+                  disabled={isResearching || !uploadedResearch.trim()}
+                  className="bg-white text-emerald-600 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isResearching ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-5 h-5" />
+                      <span>Extract Pain Points</span>
+                    </>
+                  )}
+                </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {painAngles.map((angle) => (
-                  <div
-                    key={angle.id}
-                    className={`p-5 rounded-2xl border-2 transition-all duration-200 cursor-pointer hover:shadow-lg ${
-                      angle.is_approved 
-                        ? 'bg-green-50 border-green-200' 
-                        : 'bg-white border-gray-200 hover:border-indigo-300'
+            </div>
+          )}
+
+          {/* Error Display */}
+          {researchError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+              <div className="flex items-center gap-2 text-red-700">
+                <AlertCircle className="w-5 h-5" />
+                <span className="font-medium">{researchError}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Live Research Output */}
+          {(isResearching || researchOutput) && (
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  {isResearching && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
+                  <span className="font-medium text-gray-700">{researchStatus}</span>
+                </div>
+                {researchOutput && !isResearching && (
+                  <span className="text-sm text-gray-500">{researchOutput.length} characters</span>
+                )}
+              </div>
+              <div 
+                ref={researchOutputRef}
+                className="bg-gray-900 rounded-xl p-4 h-80 overflow-y-auto font-mono text-sm text-green-400 whitespace-pre-wrap"
+              >
+                {researchOutput || 'Waiting for response...'}
+                {isResearching && <span className="animate-pulse">▊</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Extracted Pain Points */}
+          {extractedPainPoints.length > 0 && (
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-6 border border-emerald-200">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-emerald-600" />
+                  Extracted Pain Points ({extractedPainPoints.length})
+                </h4>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={toggleSelectAll}
+                    className="text-sm text-emerald-700 hover:text-emerald-900 font-medium"
+                  >
+                    {selectedExtractedIndexes.size === extractedPainPoints.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                  <button
+                    onClick={savePainPoints}
+                    disabled={selectedExtractedIndexes.size === 0}
+                    className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Save className="w-4 h-4" />
+                    Save Selected ({selectedExtractedIndexes.size})
+                  </button>
+                </div>
+              </div>
+              <div className="grid gap-3">
+                {extractedPainPoints.map((pp, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => togglePainPointSelection(idx)}
+                    className={`bg-white rounded-lg p-4 border-2 cursor-pointer transition-all ${
+                      selectedExtractedIndexes.has(idx)
+                        ? 'border-emerald-500 ring-2 ring-emerald-200'
+                        : 'border-emerald-100 hover:border-emerald-300'
                     }`}
                   >
-                    <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-start gap-3">
+                      <div className="pt-1">
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                          selectedExtractedIndexes.has(idx)
+                            ? 'bg-emerald-500 border-emerald-500'
+                            : 'border-gray-300'
+                        }`}>
+                          {selectedExtractedIndexes.has(idx) && (
+                            <CheckCircle className="w-4 h-4 text-white" />
+                          )}
+                        </div>
+                      </div>
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h5 className="font-semibold text-gray-900">{angle.title}</h5>
-                          {angle.intensity_score && (
-                            <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
-                              🔥 {angle.intensity_score}/10
+                        <div className="flex items-start justify-between">
+                          <h5 className="font-semibold text-gray-900">{pp.title}</h5>
+                          {pp.emotional_impact_score && (
+                            <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-medium ml-2">
+                              🔥 {pp.emotional_impact_score}/10
                             </span>
                           )}
                         </div>
-                        {angle.visceral_phrase && (
-                          <p className="text-indigo-600 font-medium text-sm mb-2">"{angle.visceral_phrase}"</p>
+                        <p className="text-sm text-gray-600 mt-1">{pp.description}</p>
+                        {pp.visceral_trigger && (
+                          <p className="text-sm text-emerald-600 mt-2 italic">"{pp.visceral_trigger}"</p>
                         )}
-                        <p className="text-sm text-gray-600">{angle.description}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                      <div className="flex items-center gap-2">
-                        {angle.category && (
-                          <span className={`text-xs px-2 py-1 rounded-full ${getCategoryColor(angle.category)}`}>
-                            {angle.category}
-                          </span>
-                        )}
-                        {angle.is_approved && (
-                          <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3" /> Approved
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {!angle.is_approved && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); approvePainAngle(angle.id); }}
-                            className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                            title="Approve"
-                          >
-                            <ThumbsUp className="w-4 h-4" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => generateVisualHook(angle)}
-                          className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-1"
-                        >
-                          <ImageIcon className="w-3 h-3" />
-                          Generate Hook
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -265,115 +711,286 @@ export default function SlopFactoryDashboard() {
               </div>
             </div>
           )}
+        </div>
+      </div>
 
-          {/* Empty State */}
-          {!isResearching && painAngles.length === 0 && (
-            <div className="text-center py-12 text-gray-500">
-              <Brain className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p>Enter a research topic above to discover pain angles</p>
-              <p className="text-sm mt-1">Example: "Scheduling conflicts and crew management"</p>
+      {/* Hook Brief Generation */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+        <div className="px-8 py-6 border-b border-gray-100">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-semibold text-gray-900">Hook Brief Generation</h3>
+              <p className="text-sm text-gray-500">Generate 10 unique video hook concepts</p>
+            </div>
+          </div>
+        </div>
+        <div className="p-8">
+          {/* Pain Point + Product Selection */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Select Pain Point</label>
+              <div className="relative">
+                <select
+                  value={selectedPainPoint?.id || ''}
+                  onChange={(e) => {
+                    const pp = savedPainPoints.find(p => p.id === e.target.value);
+                    setSelectedPainPoint(pp || null);
+                  }}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent appearance-none bg-white text-gray-900"
+                >
+                  <option value="" className="text-gray-500">Choose a pain point...</option>
+                  {savedPainPoints.map((pp) => (
+                    <option key={pp.id} value={pp.id} className="text-gray-900">
+                      {pp.title} (🔥 {pp.emotional_impact_score}/10)
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+              </div>
+              {savedPainPoints.length === 0 && (
+                <p className="text-sm text-amber-600 mt-2">
+                  ↑ Run deep research first to discover pain points
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Select Product</label>
+              <div className="relative">
+                <select
+                  value={selectedProduct?.id || ''}
+                  onChange={(e) => {
+                    const prod = products.find(p => p.id === e.target.value);
+                    setSelectedProduct(prod || null);
+                  }}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent appearance-none bg-white text-gray-900"
+                >
+                  <option value="" className="text-gray-500">Choose a product...</option>
+                  {products.map((prod) => (
+                    <option key={prod.id} value={prod.id} className="text-gray-900">
+                      {prod.name} (${(prod.price_cents / 100).toFixed(0)})
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+              </div>
+              {products.length === 0 && (
+                <p className="text-sm text-amber-600 mt-2">
+                  No products found. Add products to the database first.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Selected Summary */}
+          {selectedPainPoint && selectedProduct && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-4 mb-6 border border-amber-200">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-xs font-medium text-amber-700 uppercase">Pain Point</span>
+                  <p className="font-semibold text-gray-900">{selectedPainPoint.title}</p>
+                </div>
+                <div>
+                  <span className="text-xs font-medium text-amber-700 uppercase">Product</span>
+                  <p className="font-semibold text-gray-900">{selectedProduct.name}</p>
+                </div>
+              </div>
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Script Generation Section */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center">
-              <FileText className="w-5 h-5 text-white" />
+          {/* Generate Button */}
+          <button
+            onClick={generateHookBriefs}
+            disabled={!selectedPainPoint || !selectedProduct || isGeneratingBriefs}
+            className="w-full bg-gradient-to-r from-amber-500 to-orange-600 text-white px-6 py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isGeneratingBriefs ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Generating 10 Hook Concepts...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-5 h-5" />
+                <span>Generate 10 Hook Briefs</span>
+              </>
+            )}
+          </button>
+
+          {/* Live Brief Generation Output */}
+          {(isGeneratingBriefs || briefsOutput) && (
+            <div className="mt-6">
+              <div className="flex items-center gap-2 mb-3">
+                {isGeneratingBriefs && <Loader2 className="w-4 h-4 animate-spin text-amber-600" />}
+                <span className="font-medium text-gray-700">{briefsStatus}</span>
+              </div>
+              <div className="bg-gray-900 rounded-xl p-4 h-64 overflow-y-auto font-mono text-sm text-amber-400 whitespace-pre-wrap">
+                {briefsOutput || 'Generating...'}
+                {isGeneratingBriefs && <span className="animate-pulse">▊</span>}
+              </div>
             </div>
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900">Script Generation</h3>
-              <p className="text-sm text-gray-500">Create compelling ad scripts with pain → solution flow</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-3">Select Product</label>
-              <select className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-                <option>Change Order Shield</option>
-                <option>Site Reporter Pro</option>
-                <option>Schedule Builder AI</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-3">Script Length</label>
-              <select className="w-full border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-                <option>30 seconds</option>
-                <option>45 seconds</option>
-                <option>60 seconds</option>
-              </select>
-            </div>
-          </div>
-          
-          <div className="mb-8">
-            <label className="block text-sm font-semibold text-gray-700 mb-3">
-              Select Pain Points {painAngles.filter(a => a.is_approved).length > 0 && `(${painAngles.filter(a => a.is_approved).length} approved)`}
-            </label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {(painAngles.filter(a => a.is_approved).length > 0 
-                ? painAngles.filter(a => a.is_approved) 
-                : [
-                    { id: '1', title: 'Working for free', visceral_phrase: 'Handshake = $10k loss' },
-                    { id: '2', title: 'Late night paperwork', visceral_phrase: 'Dining table = office' },
-                    { id: '3', title: 'Missing family events', visceral_phrase: 'Another missed game' },
-                    { id: '4', title: 'Client interrogation calls', visceral_phrase: 'Where are you?!' }
-                  ]
-              ).map((pain) => (
-                <label key={pain.id} className="flex items-center space-x-3 p-4 bg-gray-50 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
-                  <input type="checkbox" className="w-5 h-5 rounded-lg text-blue-600 focus:ring-blue-500" />
-                  <div>
-                    <span className="text-sm font-medium text-gray-700 block">{pain.title}</span>
-                    {pain.visceral_phrase && (
-                      <span className="text-xs text-indigo-600">"{pain.visceral_phrase}"</span>
-                    )}
+          )}
+
+          {/* Generated Briefs Carousel */}
+          {editableBriefs.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-emerald-600" />
+                  Hook Briefs ({editableBriefs.length}) 
+                  {selectedBriefIndexes.size > 0 && (
+                    <span className="text-amber-600 text-sm font-normal">
+                      • {selectedBriefIndexes.size} selected
+                    </span>
+                  )}
+                </h4>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => scrollCarousel('left')}
+                    className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    <ArrowRight className="w-5 h-5 rotate-180" />
+                  </button>
+                  <button
+                    onClick={() => scrollCarousel('right')}
+                    className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+              
+              {/* Horizontal Carousel */}
+              <div 
+                ref={briefsCarouselRef}
+                className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory scrollbar-thin scrollbar-thumb-amber-300 scrollbar-track-gray-100"
+                style={{ scrollbarWidth: 'thin' }}
+              >
+                {editableBriefs.map((brief, idx) => (
+                  <div 
+                    key={brief.id || idx}
+                    className={`flex-shrink-0 w-96 bg-white rounded-xl border-2 p-5 snap-start transition-all ${
+                      selectedBriefIndexes.has(idx)
+                        ? 'border-amber-500 ring-2 ring-amber-200 shadow-lg'
+                        : 'border-gray-200 hover:border-amber-300'
+                    }`}
+                  >
+                    {/* Header with selection checkbox */}
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => toggleBriefSelection(idx)}
+                          className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                            selectedBriefIndexes.has(idx)
+                              ? 'bg-amber-500 border-amber-500'
+                              : 'border-gray-300 hover:border-amber-400'
+                          }`}
+                        >
+                          {selectedBriefIndexes.has(idx) && (
+                            <CheckCircle className="w-4 h-4 text-white" />
+                          )}
+                        </button>
+                        <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-full text-xs font-bold">
+                          #{idx + 1}
+                        </span>
+                      </div>
+                      {brief.product_name && (
+                        <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-medium">
+                          {brief.product_name}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Editable Title */}
+                    <div className="mb-3">
+                      <label className="text-xs text-gray-500 font-medium">Title</label>
+                      <input
+                        type="text"
+                        value={brief.title}
+                        onChange={(e) => updateBriefField(idx, 'title', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onKeyUp={(e) => e.stopPropagation()}
+                      />
+                    </div>
+
+                    {/* Editable Visual Description */}
+                    <div className="mb-3">
+                      <label className="text-xs text-gray-500 font-medium">Visual Description</label>
+                      <textarea
+                        value={brief.visual_description}
+                        onChange={(e) => updateBriefField(idx, 'visual_description', e.target.value)}
+                        rows={3}
+                        className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onKeyUp={(e) => e.stopPropagation()}
+                      />
+                    </div>
+
+                    {/* Editable Spoken Hook */}
+                    <div className="mb-3">
+                      <label className="text-xs text-gray-500 font-medium">Spoken Hook</label>
+                      <input
+                        type="text"
+                        value={brief.spoken_hook}
+                        onChange={(e) => updateBriefField(idx, 'spoken_hook', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm text-amber-700 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onKeyUp={(e) => e.stopPropagation()}
+                      />
+                    </div>
+
+                    {/* Editable Text Overlay */}
+                    <div className="mb-3">
+                      <label className="text-xs text-gray-500 font-medium">Text Overlay</label>
+                      <input
+                        type="text"
+                        value={brief.text_overlay}
+                        onChange={(e) => updateBriefField(idx, 'text_overlay', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onKeyUp={(e) => e.stopPropagation()}
+                      />
+                    </div>
+
+                    {/* Editable Copy Super */}
+                    <div>
+                      <label className="text-xs text-gray-500 font-medium">Copy Super</label>
+                      <input
+                        type="text"
+                        value={brief.copy_super}
+                        onChange={(e) => updateBriefField(idx, 'copy_super', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onKeyUp={(e) => e.stopPropagation()}
+                      />
+                    </div>
                   </div>
-                </label>
-              ))}
-            </div>
-          </div>
-          
-          <button className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-6 py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-            <Wand2 className="w-5 h-5" />
-            <span>Generate Script Batch</span>
-          </button>
-        </div>
-      </div>
+                ))}
+              </div>
 
-      {/* Sora Video Generation */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-xl flex items-center justify-center">
-              <Video className="w-5 h-5 text-white" />
+              {/* Store Button */}
+              <div className="flex items-center justify-between mt-6 pt-6 border-t border-gray-200">
+                <div className="text-sm text-gray-500">
+                  {selectedBriefIndexes.size === 0 
+                    ? 'Click the checkboxes to select briefs to store'
+                    : `${selectedBriefIndexes.size} brief${selectedBriefIndexes.size > 1 ? 's' : ''} selected`
+                  }
+                </div>
+                <button
+                  onClick={storeHookBriefs}
+                  disabled={selectedBriefIndexes.size === 0}
+                  className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save className="w-5 h-5" />
+                  Store Hook Briefs ({selectedBriefIndexes.size})
+                </button>
+              </div>
             </div>
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900">Sora Video Generation</h3>
-              <p className="text-sm text-gray-500">Convert scripts into visual pain scenarios</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-8">
-          <div className="bg-gradient-to-r from-gray-50 to-gray-100/30 rounded-2xl p-6 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-semibold text-gray-700">Generation Queue</span>
-              <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded-full">12 videos pending</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-3">
-              <div className="bg-gradient-to-r from-blue-500 to-cyan-500 h-3 rounded-full transition-all duration-500" style={{ width: '35%' }}></div>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">Estimated time: 24 minutes</p>
-          </div>
-          
-          <button className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-6 py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-            <Play className="w-5 h-5" />
-            <span>Start Sora Generation</span>
-          </button>
+          )}
         </div>
       </div>
 
@@ -387,374 +1004,43 @@ export default function SlopFactoryDashboard() {
           <ArrowRight className="w-5 h-5" />
         </button>
       </div>
-
-      {/* Visual Hook Modal */}
-      {showHookModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900">Visual Hook Generator</h3>
-                <p className="text-sm text-gray-500">{selectedAngle?.title}</p>
-              </div>
-              <button
-                onClick={() => { setShowHookModal(false); setGeneratedHook(null); }}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6">
-              {isGeneratingHook ? (
-                <div className="text-center py-12">
-                  <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" />
-                  <p className="text-gray-600">Generating visual hook...</p>
-                  <p className="text-sm text-gray-400 mt-1">Creating scene, copy, and script</p>
-                </div>
-              ) : generatedHook ? (
-                <div className="space-y-6">
-                  {/* Scene Description */}
-                  <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-5">
-                    <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                      <Video className="w-4 h-4 text-purple-600" />
-                      Scene Description (for Sora)
-                    </h4>
-                    <p className="text-gray-700">{generatedHook.scene_description}</p>
-                    <div className="flex gap-2 mt-3">
-                      <span className="text-xs px-2 py-1 bg-white rounded-full text-gray-600">
-                        📍 {generatedHook.scene_setting}
-                      </span>
-                      <span className="text-xs px-2 py-1 bg-white rounded-full text-gray-600">
-                        😔 {generatedHook.scene_mood}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* On-Screen Text */}
-                  <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-5">
-                    <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-blue-600" />
-                      On-Screen Text Copy
-                    </h4>
-                    <div className="space-y-2">
-                      <div className="bg-white rounded-lg p-3">
-                        <span className="text-xs text-gray-400 block mb-1">HEADLINE</span>
-                        <p className="text-2xl font-bold text-gray-900">{generatedHook.headline_text}</p>
-                      </div>
-                      <div className="bg-white rounded-lg p-3">
-                        <span className="text-xs text-gray-400 block mb-1">SUBHEADLINE</span>
-                        <p className="text-lg text-gray-700">{generatedHook.subheadline_text}</p>
-                      </div>
-                      <div className="bg-white rounded-lg p-3">
-                        <span className="text-xs text-gray-400 block mb-1">CTA</span>
-                        <p className="text-blue-600 font-medium">{generatedHook.cta_text}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Spoken Script */}
-                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5">
-                    <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                      <Mic className="w-4 h-4 text-green-600" />
-                      Spoken Script (for ElevenLabs)
-                    </h4>
-                    <p className="text-gray-700 italic">"{generatedHook.spoken_script}"</p>
-                    <span className="text-xs text-gray-500 mt-2 block">
-                      Voice tone: {generatedHook.voice_tone}
-                    </span>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex gap-3 pt-4">
-                    <button className="flex-1 bg-indigo-600 text-white px-4 py-3 rounded-xl font-semibold hover:bg-indigo-700 transition-colors">
-                      Save Hook
-                    </button>
-                    <button className="flex-1 bg-gray-100 text-gray-700 px-4 py-3 rounded-xl font-semibold hover:bg-gray-200 transition-colors">
-                      Regenerate
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 
-  const VideoEditingTab = () => (
+  const videoEditingContent = (
     <div className="space-y-8">
-      {/* Video Processing Pipeline */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
-              <Layers className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900">Video Processing Pipeline</h3>
-              <p className="text-sm text-gray-500">Enhance and brand your Sora videos</p>
-            </div>
-          </div>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="text-center py-12 text-gray-500">
+          <Video className="w-16 h-16 mx-auto mb-4 opacity-30" />
+          <h3 className="text-xl font-semibold text-gray-700 mb-2">Video Editing Coming Soon</h3>
+          <p>Complete the script creation phase first to unlock video editing.</p>
         </div>
-        <div className="p-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-semibold text-gray-900">Watermark Removal</h4>
-                <CheckCircle className="w-6 h-6 text-green-600" />
-              </div>
-              <p className="text-sm text-gray-600 mb-4">Remove Sora watermarks</p>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold text-gray-900">12/12</span>
-                <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full">Complete</span>
-              </div>
-            </div>
-            
-            <div className="bg-gradient-to-br from-yellow-50 to-orange-50 border border-yellow-200 rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-semibold text-gray-900">AI Upscaling</h4>
-                <Clock className="w-6 h-6 text-yellow-600" />
-              </div>
-              <p className="text-sm text-gray-600 mb-4">Higgsfield AI enhancement</p>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold text-gray-900">8/12</span>
-                <span className="text-xs text-yellow-600 bg-yellow-100 px-2 py-1 rounded-full">Processing</span>
-              </div>
-            </div>
-            
-            <div className="bg-gradient-to-br from-gray-50 to-slate-50 border border-gray-200 rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="font-semibold text-gray-900">Quality Check</h4>
-                <AlertCircle className="w-6 h-6 text-gray-400" />
-              </div>
-              <p className="text-sm text-gray-600 mb-4">Verify video quality</p>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold text-gray-900">0/12</span>
-                <span className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded-full">Pending</span>
-              </div>
-            </div>
-          </div>
-          
-          <button className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-            <RefreshCw className="w-5 h-5" />
-            <span>Process All Videos</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Automated Editing */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-xl flex items-center justify-center">
-              <Wand2 className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900">Automated Editing Suite</h3>
-              <p className="text-sm text-gray-500">Apply branding, captions, and effects</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-            {[
-              { icon: FileText, color: 'yellow', title: 'Avatar Callout', desc: 'RESIDENTIAL CONTRACTORS overlay' },
-              { icon: Mic, color: 'blue', title: 'ElevenLabs Voiceover', desc: 'AI voice narration sync' },
-              { icon: DollarSign, color: 'green', title: 'Pricing & Guarantees', desc: '$2,500, lifetime access' },
-              { icon: Zap, color: 'purple', title: 'Sound Effects', desc: 'Whooshes, shutters, music' }
-            ].map((item, index) => (
-              <div key={index} className="flex items-center space-x-4 p-5 bg-gray-50 rounded-2xl hover:shadow-md transition-all duration-200">
-                <div className={`w-12 h-12 bg-${item.color}-100 rounded-xl flex items-center justify-center`}>
-                  <item.icon className={`w-6 h-6 text-${item.color}-600`} />
-                </div>
-                <div className="flex-1">
-                  <p className="font-semibold text-gray-900">{item.title}</p>
-                  <p className="text-sm text-gray-500">{item.desc}</p>
-                </div>
-                <input type="checkbox" className="w-5 h-5 rounded-lg text-blue-600" defaultChecked />
-              </div>
-            ))}
-          </div>
-          
-          <button className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white px-6 py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-            <Wand2 className="w-5 h-5" />
-            <span>Apply All Edits</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Navigation */}
-      <div className="flex justify-between">
-        <button 
-          onClick={() => setActiveTab('script')}
-          className="bg-gray-100 text-gray-700 px-8 py-4 rounded-xl font-semibold hover:bg-gray-200 transition-all duration-200 flex items-center space-x-3"
-        >
-          <ArrowRight className="w-5 h-5 rotate-180" />
-          <span>Back to Scripts</span>
-        </button>
-        <button 
-          onClick={() => setActiveTab('meta')}
-          className="bg-gray-900 text-white px-8 py-4 rounded-xl font-semibold hover:bg-gray-800 hover:shadow-lg transition-all duration-200 flex items-center space-x-3"
-        >
-          <span>Deploy to Meta</span>
-          <ArrowRight className="w-5 h-5" />
-        </button>
       </div>
     </div>
   );
 
-  const MetaTab = () => (
+  const metaContent = (
     <div className="space-y-8">
-      {/* Campaign Deployment */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl flex items-center justify-center">
-              <Facebook className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900">Campaign Deployment</h3>
-              <p className="text-sm text-gray-500">Push ads to Facebook and track performance</p>
-            </div>
-          </div>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="text-center py-12 text-gray-500">
+          <Facebook className="w-16 h-16 mx-auto mb-4 opacity-30" />
+          <h3 className="text-xl font-semibold text-gray-700 mb-2">Meta Deployment Coming Soon</h3>
+          <p>Complete the video editing phase first to deploy to Meta.</p>
         </div>
-        <div className="p-8">
-          <div className="mb-8">
-            <label className="block text-sm font-semibold text-gray-700 mb-3">Select Campaign</label>
-            <select className="w-full lg:w-1/2 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-              <option>Testing Campaign (New Creatives)</option>
-              <option>Main Campaign (Proven Winners)</option>
-              <option>Scale Campaign (Top Performers)</option>
-            </select>
-          </div>
-          
-          <div className="mb-8">
-            <label className="block text-sm font-semibold text-gray-700 mb-3">Ad Sets Configuration</label>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[
-                { name: 'Working for Free', ads: 3, status: 'ready' },
-                { name: 'Late Night Work', ads: 3, status: 'ready' },
-                { name: 'Missing Events', ads: 3, status: 'ready' },
-                { name: 'Client Calls', ads: 3, status: 'processing' },
-                { name: 'Scope Creep', ads: 2, status: 'pending' }
-              ].map((adSet, index) => (
-                <div key={index} className="p-4 bg-gray-50 rounded-xl hover:shadow-md transition-all duration-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-gray-900">{adSet.name}</span>
-                    <span className={`w-2 h-2 rounded-full ${
-                      adSet.status === 'ready' ? 'bg-green-500' :
-                      adSet.status === 'processing' ? 'bg-yellow-500' : 'bg-gray-300'
-                    }`}></span>
-                  </div>
-                  <p className="text-sm text-gray-500">{adSet.ads} ads {adSet.status}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          
-          <button className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-            <Upload className="w-5 h-5" />
-            <span>Deploy to Facebook</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Performance Metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100">
-          <div className="px-8 py-6 border-b border-gray-100">
-            <h3 className="text-xl font-semibold text-gray-900">Performance Metrics</h3>
-            <p className="text-sm text-gray-500">Real-time creative performance</p>
-          </div>
-          <div className="p-8">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-              {[
-                { label: 'ROAS', value: '4.2x', change: '+12%', positive: true },
-                { label: 'CTR', value: '2.8%', change: '+0.4%', positive: true },
-                { label: 'CPC', value: '$1.24', change: '-8%', positive: true },
-                { label: 'Conv Cost', value: '$42', change: '-15%', positive: true }
-              ].map((metric, index) => (
-                <div key={index}>
-                  <p className="text-sm font-medium text-gray-500 mb-1">{metric.label}</p>
-                  <p className="text-3xl font-bold text-gray-900">{metric.value}</p>
-                  <p className={`text-sm font-medium ${metric.positive ? 'text-green-600' : 'text-red-600'}`}>
-                    {metric.change} vs last week
-                  </p>
-                </div>
-              ))}
-            </div>
-            
-            <div>
-              <h4 className="font-semibold text-gray-900 mb-4">Top Performers</h4>
-              <div className="space-y-3">
-                {[
-                  { name: '"Handshake = $10k" - Change Order', roas: '6.8x', ctr: '3.2%', status: 'winner' },
-                  { name: '"Late Night Paperwork" - Site Reporter', roas: '3.9x', ctr: '2.4%', status: 'testing' }
-                ].map((ad, index) => (
-                  <div key={index} className={`p-4 rounded-xl ${
-                    ad.status === 'winner' ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
-                  }`}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold text-gray-900">{ad.name}</p>
-                        <p className="text-sm text-gray-600">ROAS: {ad.roas} | CTR: {ad.ctr}</p>
-                      </div>
-                      <span className={`px-3 py-1 text-xs font-semibold rounded-full ${
-                        ad.status === 'winner' ? 'bg-green-600 text-white' : 'bg-yellow-600 text-white'
-                      }`}>
-                        {ad.status === 'winner' ? 'Winner' : 'Testing'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* AI Insights */}
-        <div className="bg-gradient-to-br from-purple-600 to-indigo-700 rounded-2xl p-8 text-white">
-          <div className="flex items-center space-x-3 mb-6">
-            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-              <Brain className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-semibold">AI Insights</h3>
-              <p className="text-sm text-purple-100">Voice-enabled optimization</p>
-            </div>
-          </div>
-          <p className="text-purple-100 mb-6">Analyze winning pain angles and get real-time creative suggestions</p>
-          <button className="w-full bg-white text-purple-600 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-            <Mic className="w-5 h-5" />
-            <span>Talk to AI</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Navigation */}
-      <div className="flex justify-start">
-        <button 
-          onClick={() => setActiveTab('video')}
-          className="bg-gray-100 text-gray-700 px-8 py-4 rounded-xl font-semibold hover:bg-gray-200 transition-all duration-200 flex items-center space-x-3"
-        >
-          <ArrowRight className="w-5 h-5 rotate-180" />
-          <span>Back to Video Editing</span>
-        </button>
       </div>
     </div>
   );
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Modern Header */}
+      {/* Header */}
       <div className="bg-blue-900 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-8">
             <div className="flex items-center justify-between mb-8">
               <div className="flex items-center space-x-4">
                 <div className="w-14 h-14 bg-white rounded-2xl shadow-lg flex items-center justify-center">
-                  <div className="text-blue-600 font-bold text-xl">OAI</div>
+                  <div className="text-blue-600 font-bold text-xl">🏭</div>
                 </div>
                 <div>
                   <h1 className="text-3xl font-bold text-white">The Slop Factory</h1>
@@ -766,7 +1052,7 @@ export default function SlopFactoryDashboard() {
               </button>
             </div>
             
-            {/* Modern Tab Navigation */}
+            {/* Tab Navigation */}
             <div className="flex space-x-2">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
@@ -792,9 +1078,11 @@ export default function SlopFactoryDashboard() {
 
       {/* Tab Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'script' && <ScriptCreationTab />}
-        {activeTab === 'video' && <VideoEditingTab />}
-        {activeTab === 'meta' && <MetaTab />}
+        <div className="space-y-8">
+          {activeTab === 'script' && scriptCreationContent}
+          {activeTab === 'video' && videoEditingContent}
+          {activeTab === 'meta' && metaContent}
+        </div>
       </div>
     </div>
   );

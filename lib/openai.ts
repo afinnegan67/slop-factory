@@ -1,7 +1,14 @@
 import OpenAI from 'openai';
 
+// Only create client if API key exists
+const apiKey = process.env.OPENAI_API_KEY;
+
+if (!apiKey) {
+  console.warn('Warning: OPENAI_API_KEY is not set');
+}
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: apiKey || 'missing-key',
 });
 
 export async function runDeepResearch(topic: string, targetAudience: string): Promise<string> {
@@ -209,4 +216,5 @@ Return ONLY the JSON object, no other text.`
     };
   }
 }
+
 

@@ -1,0 +1,329 @@
+The Slop Factory - Complete Build Guide
+Project Overview
+The Slop Factory is an automated ad generation pipeline for Opulence AI that creates high-converting Facebook video ads targeting residential contractors. The system transforms pain points into compelling video advertisements through AI-powered content generation, video processing, and performance optimization.
+
+Core Workflow
+Phase 1: Content Intelligence & Generation
+Pain Point + Product Selection → User selects target pain and solution
+Hook Brief Generation → AI creates 10 diverse video concepts
+Brief Selection → User reviews and selects winning concept
+Script Generation → AI creates full 6-section ad script
+Sora Prompt Creation → AI generates 3 detailed video prompts with timeline alignment
+Phase 2: Video Production & Processing
+Batch Approval → User reviews/edits all content before production
+Sora Generation → 3 video clips + ElevenLabs audio generation
+Video Processing Pipeline → Raw → Scrubbed (watermark removal) → Processed (upscaled)
+Editor Assembly → Automated editing with B-roll, captions, effects, pricing overlays
+Phase 3: Performance & Optimization
+Training Data Collection → All AI suggestions vs user edits stored for model improvement
+Performance Tracking → Video performance feeds back to optimize future generations
+Iteration Loop → Winning patterns inform new content creation
+Target Audience & Products
+Avatar: Residential contractors dealing with admin overhead, scope creep, and work-life balance issues
+
+Products:
+
+Change Order Shield ($2,500 one-time)
+Site Reporter Pro
+Schedule Builder AI
+Pain Points:
+
+Working for free (handshake = $10k loss)
+Late night paperwork at dining table
+Missing family events
+Client interrogation calls on the road
+Scope creep disasters
+Technical Architecture
+Frontend: Next.js Dashboard
+Framework: Next.js 15 + React 18 + TypeScript
+Styling: Tailwind CSS
+UI: Modern, sleek interface with blue-to-white gradient branding
+Navigation: 3-phase tabs (Script Creation → Video Editing → Meta)
+Backend: Supabase + MCP Integration
+Database: PostgreSQL via Supabase
+AI Integration: Claude via MCP (Model Context Protocol)
+File Storage: Supabase Storage for videos/audio
+Real-time: Supabase subscriptions for status updates
+External APIs & Services
+OpenAI Sora: Video generation
+ElevenLabs: AI voice synthesis
+removesorawatermark.online: Watermark removal
+Higgsfield AI: Video upscaling
+FFmpeg: Video processing and editing
+Complete Data Model
+Core Entities
+Pain Points & Products
+sql
+Copy code
+-- Pain points that resonate with contractors
+CREATE TABLE pain_points (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    visceral_trigger TEXT NOT NULL, -- The specific moment/scenario
+    emotional_impact_score INTEGER CHECK (emotional_impact_score BETWEEN 1 AND 10),
+    usage_count INTEGER DEFAULT 0,
+    avg_performance_score DECIMAL(5,2),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT true
+);
+
+-- Opulence AI products 
+CREATE TABLE products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL, -- "Change Order Shield", "Site Reporter Pro", "Schedule Builder AI"
+    price_cents INTEGER NOT NULL, -- 250000 for $2,500
+    value_proposition TEXT NOT NULL,
+    key_features JSONB,
+    guarantees TEXT[], -- ["money back", "lifetime access", "no subscription"]
+    demo_broll_url TEXT, -- Product demo video for editing
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT true
+);
+Hook Brief Generation & Selection
+sql
+Copy code
+-- AI-generated hook concepts (10 per pain+product combo)
+CREATE TABLE hook_brief_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pain_point_id UUID REFERENCES pain_points(id),
+    product_id UUID REFERENCES products(id),
+    generation_prompt TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE hook_briefs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES hook_brief_batches(id),
+    title VARCHAR(255) NOT NULL, -- "Free Labor Speedrun"
+    visual_description TEXT NOT NULL,
+    spoken_hook TEXT NOT NULL,
+    text_overlay TEXT NOT NULL,
+    copy_super TEXT NOT NULL,
+    ai_generated_version JSONB NOT NULL, -- Original AI output
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Selected and potentially edited brief
+CREATE TABLE selected_briefs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    hook_brief_id UUID REFERENCES hook_briefs(id),
+    final_title VARCHAR(255),
+    final_visual_description TEXT,
+    final_spoken_hook TEXT,
+    final_text_overlay TEXT,
+    final_copy_super TEXT,
+    was_edited BOOLEAN DEFAULT false,
+    edit_notes TEXT,
+    selected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+Script Generation & Editing
+sql
+Copy code
+-- Full scripts generated from selected briefs
+CREATE TABLE scripts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    selected_brief_id UUID REFERENCES selected_briefs(id),
+    
+    -- AI generated versions (6 sections)
+    ai_visceral_hook TEXT NOT NULL,
+    ai_pain_elaboration TEXT NOT NULL,
+    ai_solution_intro TEXT NOT NULL,
+    ai_product_pitch TEXT NOT NULL,
+    ai_price_reveal TEXT NOT NULL,
+    ai_cta TEXT NOT NULL,
+    
+    -- Final user-approved versions
+    final_visceral_hook TEXT NOT NULL,
+    final_pain_elaboration TEXT NOT NULL,
+    final_solution_intro TEXT NOT NULL,
+    final_product_pitch TEXT NOT NULL,
+    final_price_reveal TEXT NOT NULL,
+    final_cta TEXT NOT NULL,
+    
+    estimated_duration_seconds INTEGER,
+    was_edited BOOLEAN DEFAULT false,
+    generation_prompt TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Track individual section edits for training data
+CREATE TABLE script_edits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    script_id UUID REFERENCES scripts(id),
+    section_name VARCHAR(50) NOT NULL, -- 'visceral_hook', 'pain_elaboration', etc.
+    ai_version TEXT NOT NULL,
+    user_version TEXT NOT NULL,
+    edit_type VARCHAR(100), -- 'minor_tweak', 'major_rewrite', 'style_adjustment'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+Sora Prompt Generation
+sql
+Copy code
+-- Generated Sora prompts for the batch
+CREATE TABLE sora_prompts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    script_id UUID REFERENCES scripts(id),
+    prompt_type VARCHAR(50) NOT NULL, -- 'main_hook', 'supporting_broll_1', 'supporting_broll_2'
+    
+    -- Timeline alignment
+    start_time_seconds INTEGER NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    script_section VARCHAR(50), -- Which section this supports
+    
+    -- AI vs Final versions
+    ai_generated_prompt TEXT NOT NULL,
+    final_prompt TEXT NOT NULL,
+    
+    was_edited BOOLEAN DEFAULT false,
+    purpose_description TEXT, -- "Illustrates contractor frustration", "Shows product in action"
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Track prompt edits for training
+CREATE TABLE prompt_edits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sora_prompt_id UUID REFERENCES sora_prompts(id),
+    ai_version TEXT NOT NULL,
+    user_version TEXT NOT NULL,
+    edit_reason VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+Batch Production & Video Pipeline
+sql
+Copy code
+-- Approved batch ready for production
+CREATE TABLE production_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    script_id UUID REFERENCES scripts(id),
+    batch_name VARCHAR(255),
+    
+    -- ElevenLabs audio
+    elevenlabs_text TEXT NOT NULL, -- Full script for narration
+    audio_generation_id VARCHAR(255),
+    audio_url TEXT,
+    
+    -- Status tracking for frontend
+    current_status VARCHAR(50) DEFAULT 'pending', -- pending, generating_sora, processing_videos, editing, complete
+    status_details JSONB, -- Detailed progress for frontend
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Individual Sora video generations
+CREATE TABLE sora_generations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(id),
+    sora_prompt_id UUID REFERENCES sora_prompts(id),
+    
+    -- Sora API details
+    sora_generation_id VARCHAR(255),
+    sora_prompt_used TEXT NOT NULL,
+    
+    -- Video processing states: raw → scrubbed → processed → packing → ham
+    processing_status VARCHAR(50) DEFAULT 'generating', -- generating, raw, scrubbed, processed, packing, ham, failed
+    
+    -- URLs for each state
+    raw_url TEXT, -- Original Sora with watermark
+    scrubbed_url TEXT, -- Watermark removed
+    processed_url TEXT, -- Upscaled
+    
+    -- Retry logic
+    generation_attempts INTEGER DEFAULT 1,
+    last_error TEXT,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Final edited video output
+CREATE TABLE final_videos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(id),
+    
+    -- Editor inputs used
+    sora_videos_used UUID[], -- Array of sora_generation IDs
+    product_demo_url TEXT,
+    audio_url TEXT,
+    
+    -- Final output
+    final_video_url TEXT,
+    video_duration_seconds INTEGER,
+    
+    -- Editing metadata
+    editing_notes TEXT,
+    editor_config JSONB, -- Settings used by editor agent
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+Training Data & Performance
+sql
+Copy code
+-- Consolidated training data for model improvement
+CREATE TABLE ai_training_pairs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Context
+    pain_point_id UUID REFERENCES pain_points(id),
+    product_id UUID REFERENCES products(id),
+    content_type VARCHAR(50) NOT NULL, -- 'hook_brief', 'script_section', 'sora_prompt'
+    section_name VARCHAR(50), -- Specific section if applicable
+    
+    -- Training pair
+    ai_output TEXT NOT NULL,
+    user_correction TEXT NOT NULL,
+    
+    -- Performance context (added later when ad goes live)
+    performance_score DECIMAL(5,2),
+    roas DECIMAL(8,2),
+    ctr DECIMAL(5,2),
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Track overall performance by pain point + product combos
+CREATE TABLE combo_performance (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pain_point_id UUID REFERENCES pain_points(id),
+    product_id UUID REFERENCES products(id),
+    
+    total_videos_created INTEGER DEFAULT 0,
+    avg_roas DECIMAL(8,2),
+    avg_ctr DECIMAL(5,2),
+    best_performing_video_id UUID REFERENCES final_videos(id),
+    
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+Performance Indexes
+sql
+Copy code
+-- Key indexes for fast queries
+CREATE INDEX idx_hook_briefs_batch ON hook_briefs(batch_id);
+CREATE INDEX idx_sora_generations_batch ON sora_generations(batch_id);
+CREATE INDEX idx_sora_generations_status ON sora_generations(processing_status);
+CREATE INDEX idx_training_pairs_content_type ON ai_training_pairs(content_type);
+CREATE INDEX idx_production_batches_status ON production_batches(current_status);
+Development Phases
+Phase 1: Foundation & Content Generation
+ Supabase database setup with full schema
+ Next.js app with 3-tab navigation
+ Pain point and product management
+ Hook brief generation system (10 concepts per combo)
+ Script generation with 6-section structure
+ Sora prompt generation with timeline alignment
+ Edit tracking and training data collection
+Phase 2: Video Production Pipeline
+ Sora API integration with retry logic
+ Video processing states (raw → scrubbed → processed)
+ ElevenLabs audio generation
+ Watermark removal automation
+ Video upscaling integration
+ Status tracking for frontend updates
+Phase 3: Automated Editing & Assembly
+ FFmpeg-based video editing
+ B-roll integration and timeline management
+ Caption and text overlay generation
+ Sound effects and music integration
+ Final video assembly (ham state)
+ Quality control and output validation

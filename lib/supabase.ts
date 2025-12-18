@@ -1,68 +1,173 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+                    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || 
+                    process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// Types for our database
-export interface ResearchJob {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  topic: string;
-  target_audience: string;
-  research_depth: 'quick' | 'standard' | 'comprehensive';
-  status: 'pending' | 'researching' | 'analyzing' | 'completed' | 'failed';
-  raw_research: string | null;
-  research_summary: string | null;
-  tokens_used: number | null;
-  processing_time_ms: number | null;
-  error_message: string | null;
+if (!supabaseUrl || !supabaseKey) {
+  console.warn('Supabase credentials not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your .env file');
 }
 
-export interface PainAngle {
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Types for the new database schema
+
+export interface PainPoint {
   id: string;
-  created_at: string;
-  research_job_id: string;
   title: string;
   description: string;
-  visceral_phrase: string | null;
-  category: 'financial' | 'time' | 'family' | 'stress' | 'reputation' | null;
-  intensity_score: number | null;
-  is_approved: boolean;
-  is_archived: boolean;
-  times_used: number;
-}
-
-export interface VisualHook {
-  id: string;
+  visceral_trigger: string;
+  emotional_impact_score: number | null;
+  usage_count: number;
+  avg_performance_score: number | null;
   created_at: string;
-  pain_angle_id: string;
-  scene_description: string;
-  scene_setting: string | null;
-  scene_mood: string | null;
-  scene_duration_seconds: number;
-  headline_text: string | null;
-  subheadline_text: string | null;
-  cta_text: string | null;
-  spoken_script: string;
-  spoken_duration_seconds: number | null;
-  voice_tone: string | null;
-  status: 'draft' | 'approved' | 'generated' | 'archived';
-  video_url: string | null;
-  audio_url: string | null;
+  is_active: boolean;
 }
 
 export interface Product {
   id: string;
-  created_at: string;
   name: string;
-  tagline: string | null;
-  price: number | null;
-  guarantee: string | null;
-  benefits: string[] | null;
-  target_audience: string;
+  price_cents: number;
+  value_proposition: string;
+  key_features: Record<string, unknown> | null;
+  guarantees: string[] | null;
+  demo_broll_url: string | null;
+  created_at: string;
   is_active: boolean;
 }
 
+export interface HookBriefBatch {
+  id: string;
+  pain_point_id: string;
+  product_id: string;
+  generation_prompt: string;
+  created_at: string;
+}
+
+export interface HookBrief {
+  id: string;
+  batch_id: string;
+  title: string;
+  visual_description: string;
+  spoken_hook: string;
+  text_overlay: string;
+  copy_super: string;
+  ai_generated_version: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SelectedBrief {
+  id: string;
+  hook_brief_id: string;
+  final_title: string | null;
+  final_visual_description: string | null;
+  final_spoken_hook: string | null;
+  final_text_overlay: string | null;
+  final_copy_super: string | null;
+  was_edited: boolean;
+  edit_notes: string | null;
+  selected_at: string;
+}
+
+export interface Script {
+  id: string;
+  selected_brief_id: string;
+  ai_visceral_hook: string;
+  ai_pain_elaboration: string;
+  ai_solution_intro: string;
+  ai_product_pitch: string;
+  ai_price_reveal: string;
+  ai_cta: string;
+  final_visceral_hook: string;
+  final_pain_elaboration: string;
+  final_solution_intro: string;
+  final_product_pitch: string;
+  final_price_reveal: string;
+  final_cta: string;
+  estimated_duration_seconds: number | null;
+  was_edited: boolean;
+  generation_prompt: string | null;
+  created_at: string;
+}
+
+export interface SoraPrompt {
+  id: string;
+  script_id: string;
+  prompt_type: 'main_hook' | 'supporting_broll_1' | 'supporting_broll_2';
+  start_time_seconds: number;
+  duration_seconds: number;
+  script_section: string | null;
+  ai_generated_prompt: string;
+  final_prompt: string;
+  was_edited: boolean;
+  purpose_description: string | null;
+  created_at: string;
+}
+
+export interface ProductionBatch {
+  id: string;
+  script_id: string;
+  batch_name: string | null;
+  elevenlabs_text: string;
+  audio_generation_id: string | null;
+  audio_url: string | null;
+  current_status: 'pending' | 'generating_sora' | 'processing_videos' | 'editing' | 'complete';
+  status_details: Record<string, unknown> | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface SoraGeneration {
+  id: string;
+  batch_id: string;
+  sora_prompt_id: string;
+  sora_generation_id: string | null;
+  sora_prompt_used: string;
+  processing_status: 'generating' | 'raw' | 'scrubbed' | 'processed' | 'packing' | 'ham' | 'failed';
+  raw_url: string | null;
+  scrubbed_url: string | null;
+  processed_url: string | null;
+  generation_attempts: number;
+  last_error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface FinalVideo {
+  id: string;
+  batch_id: string;
+  sora_videos_used: string[];
+  product_demo_url: string | null;
+  audio_url: string | null;
+  final_video_url: string | null;
+  video_duration_seconds: number | null;
+  editing_notes: string | null;
+  editor_config: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AITrainingPair {
+  id: string;
+  pain_point_id: string | null;
+  product_id: string | null;
+  content_type: 'hook_brief' | 'script_section' | 'sora_prompt';
+  section_name: string | null;
+  ai_output: string;
+  user_correction: string;
+  performance_score: number | null;
+  roas: number | null;
+  ctr: number | null;
+  created_at: string;
+}
+
+export interface ComboPerformance {
+  id: string;
+  pain_point_id: string;
+  product_id: string;
+  total_videos_created: number;
+  avg_roas: number | null;
+  avg_ctr: number | null;
+  best_performing_video_id: string | null;
+  updated_at: string;
+}

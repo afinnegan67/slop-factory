@@ -186,3 +186,4 @@ CREATE POLICY "Allow all" ON visual_hooks FOR ALL USING (true);
 CREATE POLICY "Allow all" ON products FOR ALL USING (true);
 CREATE POLICY "Allow all" ON scripts FOR ALL USING (true);
 
+
