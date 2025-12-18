@@ -10,16 +10,25 @@ export async function POST(request: NextRequest) {
   try {
     const { video_ids } = await request.json();
 
+    console.log('=== SORA VIDEO STATUS CHECK ===');
+    console.log('Checking video IDs:', video_ids);
+
     if (!video_ids || !video_ids.visual_hook || !video_ids.pain_story || !video_ids.cta_closer) {
+      console.error('Missing video IDs:', video_ids);
       return NextResponse.json({ error: 'All 3 video IDs are required' }, { status: 400 });
     }
 
     // Check status of all 3 videos in parallel
+    console.log('Fetching video statuses from Sora API...');
     const [visualHookStatus, painStoryStatus, ctaCloserStatus] = await Promise.all([
       openai.videos.retrieve(video_ids.visual_hook),
       openai.videos.retrieve(video_ids.pain_story),
       openai.videos.retrieve(video_ids.cta_closer),
     ]);
+
+    console.log('Visual Hook:', { id: visualHookStatus.id, status: visualHookStatus.status, progress: visualHookStatus.progress });
+    console.log('Pain Story:', { id: painStoryStatus.id, status: painStoryStatus.status, progress: painStoryStatus.progress });
+    console.log('CTA Closer:', { id: ctaCloserStatus.id, status: ctaCloserStatus.status, progress: ctaCloserStatus.progress });
 
     // Update database status for completed/failed videos
     const updatePromises = [];

@@ -115,6 +115,11 @@ export default function SlopFactoryDashboard() {
   const [scriptStatus, setScriptStatus] = useState('');
   const [isLoadingBriefs, setIsLoadingBriefs] = useState(false);
 
+  // Audio Generation state
+  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
   // Sora Prompts state
   const [isGeneratingSora, setIsGeneratingSora] = useState(false);
   const [soraOutput, setSoraOutput] = useState('');
@@ -124,6 +129,16 @@ export default function SlopFactoryDashboard() {
 
   // Sora Video Generation state
   const [isGeneratingSoraVideos, setIsGeneratingSoraVideos] = useState(false);
+  const [isGeneratingSingleVideo, setIsGeneratingSingleVideo] = useState<{
+    visual_hook: boolean;
+    pain_story: boolean;
+    cta_closer: boolean;
+  }>({ visual_hook: false, pain_story: false, cta_closer: false });
+  const [singleVideoUrls, setSingleVideoUrls] = useState<{
+    visual_hook: string | null;
+    pain_story: string | null;
+    cta_closer: string | null;
+  }>({ visual_hook: null, pain_story: null, cta_closer: null });
   const [soraVideoIds, setSoraVideoIds] = useState<{
     visual_hook: string;
     pain_story: string;
@@ -142,6 +157,7 @@ export default function SlopFactoryDashboard() {
     sora_generation_id: string;
     sora_prompt_used: string;
     processing_status: string;
+    raw_url: string | null;
     created_at: string;
     completed_at: string | null;
     last_error: string | null;
@@ -677,6 +693,55 @@ export default function SlopFactoryDashboard() {
     }
   };
 
+  // Generate audio from script using ElevenLabs
+  const generateScriptAudio = async () => {
+    if (!editableScript) {
+      setAudioError('No script to generate audio from');
+      return;
+    }
+
+    // Combine all script sections into one text
+    const fullScript = [
+      editableScript.visceral_hook,
+      editableScript.pain_elaboration,
+      editableScript.solution_intro,
+      editableScript.product_pitch,
+      editableScript.price_reveal,
+      editableScript.cta,
+    ].join(' ');
+
+    console.log('=== GENERATING AUDIO ===');
+    console.log('Script length:', fullScript.length);
+
+    setIsGeneratingAudio(true);
+    setAudioError(null);
+    setAudioUrl(null);
+
+    try {
+      const response = await fetch('/api/audio/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script_text: fullScript }),
+      });
+
+      const data = await response.json();
+      console.log('Audio response:', data);
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate audio');
+      }
+
+      setAudioUrl(data.audio.url);
+      console.log('Audio generated:', data.audio.url);
+
+    } catch (error) {
+      console.error('Audio generation error:', error);
+      setAudioError(error instanceof Error ? error.message : 'Failed to generate audio');
+    } finally {
+      setIsGeneratingAudio(false);
+    }
+  };
+
   // Generate Sora prompts from the ad script
   const generateSoraPrompts = async () => {
     if (!editableScript) return;
@@ -760,27 +825,48 @@ export default function SlopFactoryDashboard() {
     } : null);
   };
 
-  // Generate Sora Videos
+  // Generate Sora Videos (waits for completion server-side)
   const generateSoraVideos = async () => {
-    if (!editableSoraPrompts) return;
+    if (!editableSoraPrompts) {
+      console.error('No editable prompts available');
+      setSoraVideoError('No prompts available. Generate prompts first.');
+      return;
+    }
+
+    console.log('=== STARTING SORA VIDEO GENERATION ===');
+    console.log('Prompts to send:', editableSoraPrompts);
 
     setIsGeneratingSoraVideos(true);
     setSoraVideoError(null);
-    setSoraVideoStatus(null);
+    setSoraVideoStatus({
+      visual_hook: { status: 'in_progress', progress: 0 },
+      pain_story: { status: 'in_progress', progress: 0 },
+      cta_closer: { status: 'in_progress', progress: 0 },
+    });
 
     try {
-      // Start video generation
+      // This call waits for all videos to complete (5-15 minutes)
+      console.log('Calling /api/sora-videos/generate (this may take 5-15 minutes)...');
       const response = await fetch('/api/sora-videos/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompts: editableSoraPrompts }),
       });
 
+      console.log('Response status:', response.status);
       const data = await response.json();
+      console.log('Response data:', data);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to start video generation');
+        throw new Error(data.error || `API error ${response.status}: Failed to generate videos`);
       }
+
+      if (!data.videos) {
+        throw new Error('No videos returned from API');
+      }
+
+      console.log('=== ALL VIDEOS GENERATED SUCCESSFULLY ===');
+      console.log('Videos:', data.videos);
 
       // Store video IDs
       setSoraVideoIds({
@@ -789,30 +875,81 @@ export default function SlopFactoryDashboard() {
         cta_closer: data.videos.cta_closer.id,
       });
 
-      // Set initial status
+      // All videos are now complete with URLs
       setSoraVideoStatus({
-        visual_hook: { status: data.videos.visual_hook.status, progress: data.videos.visual_hook.progress },
-        pain_story: { status: data.videos.pain_story.status, progress: data.videos.pain_story.progress },
-        cta_closer: { status: data.videos.cta_closer.status, progress: data.videos.cta_closer.progress },
+        visual_hook: { status: 'completed', progress: 100 },
+        pain_story: { status: 'completed', progress: 100 },
+        cta_closer: { status: 'completed', progress: 100 },
       });
 
-      // Start polling for status
-      pollVideoStatus({
-        visual_hook: data.videos.visual_hook.id,
-        pain_story: data.videos.pain_story.id,
-        cta_closer: data.videos.cta_closer.id,
-      });
+      // Refresh the sora generations list to show the new videos
+      loadSoraGenerations();
 
     } catch (error) {
-      console.error('Failed to generate Sora videos:', error);
-      setSoraVideoError(error instanceof Error ? error.message : 'Failed to generate videos');
+      console.error('=== SORA VIDEO GENERATION FAILED ===');
+      console.error('Error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate videos';
+      setSoraVideoError(errorMessage);
+    } finally {
       setIsGeneratingSoraVideos(false);
+    }
+  };
+
+  // Generate single Sora video (for debugging)
+  const generateSingleVideo = async (promptType: 'visual_hook' | 'pain_story' | 'cta_closer') => {
+    if (!editableSoraPrompts) {
+      setSoraVideoError('No prompts available');
+      return;
+    }
+
+    const prompt = editableSoraPrompts[promptType].prompt;
+    console.log(`=== GENERATING SINGLE VIDEO: ${promptType} ===`);
+    console.log('Prompt:', prompt);
+
+    setIsGeneratingSingleVideo(prev => ({ ...prev, [promptType]: true }));
+    setSoraVideoError(null);
+
+    try {
+      const response = await fetch('/api/sora-videos/generate-single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, prompt_type: promptType }),
+      });
+
+      const data = await response.json();
+      console.log('Response:', data);
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate video');
+      }
+
+      console.log(`=== SINGLE VIDEO COMPLETE: ${promptType} ===`);
+      console.log('URL:', data.video.url);
+
+      setSingleVideoUrls(prev => ({ ...prev, [promptType]: data.video.url }));
+      
+      // Refresh library
+      loadSoraGenerations();
+
+    } catch (error) {
+      console.error(`=== SINGLE VIDEO FAILED: ${promptType} ===`);
+      console.error('Error:', error);
+      setSoraVideoError(error instanceof Error ? error.message : 'Failed to generate video');
+    } finally {
+      setIsGeneratingSingleVideo(prev => ({ ...prev, [promptType]: false }));
     }
   };
 
   // Poll video status
   const pollVideoStatus = async (videoIds: { visual_hook: string; pain_story: string; cta_closer: string }) => {
+    console.log('=== STARTING VIDEO STATUS POLLING ===');
+    console.log('Video IDs to poll:', videoIds);
+    
+    let pollCount = 0;
     const pollInterval = setInterval(async () => {
+      pollCount++;
+      console.log(`Poll #${pollCount} - Checking video status...`);
+      
       try {
         const response = await fetch('/api/sora-videos/status', {
           method: 'POST',
@@ -821,16 +958,20 @@ export default function SlopFactoryDashboard() {
         });
 
         const data = await response.json();
+        console.log(`Poll #${pollCount} - Response:`, data);
 
         if (!response.ok) {
           throw new Error(data.error || 'Failed to check video status');
         }
 
-        setSoraVideoStatus({
+        const newStatus = {
           visual_hook: { status: data.videos.visual_hook.status, progress: data.videos.visual_hook.progress },
           pain_story: { status: data.videos.pain_story.status, progress: data.videos.pain_story.progress },
           cta_closer: { status: data.videos.cta_closer.status, progress: data.videos.cta_closer.progress },
-        });
+        };
+        
+        console.log(`Poll #${pollCount} - Status update:`, newStatus);
+        setSoraVideoStatus(newStatus);
 
         // Check if all videos are done (completed or failed)
         const allDone = ['completed', 'failed'].includes(data.videos.visual_hook.status) &&
@@ -838,12 +979,15 @@ export default function SlopFactoryDashboard() {
                        ['completed', 'failed'].includes(data.videos.cta_closer.status);
 
         if (allDone) {
+          console.log('=== ALL VIDEOS COMPLETE ===');
           clearInterval(pollInterval);
           setIsGeneratingSoraVideos(false);
+          // Refresh the sora generations list
+          loadSoraGenerations();
         }
 
       } catch (error) {
-        console.error('Error polling video status:', error);
+        console.error(`Poll #${pollCount} - ERROR:`, error);
         clearInterval(pollInterval);
         setIsGeneratingSoraVideos(false);
         setSoraVideoError(error instanceof Error ? error.message : 'Failed to check status');
@@ -1684,6 +1828,87 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                 </div>
               </div>
 
+              {/* ElevenLabs Audio Generation */}
+              <div className="mt-6 bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-5 border border-amber-200">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center">
+                      <Mic className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h5 className="font-semibold text-amber-900">Generate Voiceover</h5>
+                      <p className="text-xs text-amber-700">Create audio narration with ElevenLabs</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={generateScriptAudio}
+                    disabled={isGeneratingAudio}
+                    className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGeneratingAudio ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="w-4 h-4" />
+                        Generate Audio
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Audio Error */}
+                {audioError && (
+                  <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4" />
+                      {audioError}
+                    </p>
+                  </div>
+                )}
+
+                {/* Audio Player & Download */}
+                {audioUrl && (
+                  <div className="bg-white rounded-lg p-4 border border-amber-200">
+                    <div className="flex items-center gap-3 mb-3">
+                      <CheckCircle className="w-5 h-5 text-emerald-500" />
+                      <span className="text-sm font-medium text-gray-700">Audio Generated Successfully!</span>
+                    </div>
+                    
+                    {/* Audio Player */}
+                    <audio 
+                      controls 
+                      className="w-full mb-3"
+                      src={audioUrl}
+                    >
+                      Your browser does not support the audio element.
+                    </audio>
+                    
+                    {/* Download Button */}
+                    <a
+                      href={audioUrl}
+                      download="script_voiceover.mp3"
+                      className="inline-flex items-center gap-2 text-sm text-amber-600 hover:text-amber-700 font-medium"
+                    >
+                      <ArrowRight className="w-4 h-4 rotate-90" />
+                      Download MP3
+                    </a>
+                  </div>
+                )}
+
+                {/* Generating Status */}
+                {isGeneratingAudio && (
+                  <div className="mt-3 p-3 bg-amber-100 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-800 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating voiceover with ElevenLabs... This may take 10-30 seconds.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Save Button */}
               <div className="flex items-center justify-between mt-6 pt-6 border-t border-gray-200">
                 <div className="text-sm text-gray-500">
@@ -1777,6 +2002,28 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                     onKeyDown={(e) => e.stopPropagation()}
                     placeholder="Visual hook prompt..."
                   />
+                  {singleVideoUrls.visual_hook && (
+                    <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-700">
+                      ✅ Video ready: <a href={singleVideoUrls.visual_hook} target="_blank" rel="noopener noreferrer" className="underline">View</a>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => generateSingleVideo('visual_hook')}
+                    disabled={isGeneratingSingleVideo.visual_hook}
+                    className="mt-3 w-full bg-violet-500 hover:bg-violet-600 disabled:bg-violet-300 text-white text-xs py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isGeneratingSingleVideo.visual_hook ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3 h-3" />
+                        Generate This Video
+                      </>
+                    )}
+                  </button>
                 </div>
 
                 {/* Card 2: Pain/Story */}
@@ -1795,6 +2042,28 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                     onKeyDown={(e) => e.stopPropagation()}
                     placeholder="Pain story prompt..."
                   />
+                  {singleVideoUrls.pain_story && (
+                    <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-700">
+                      ✅ Video ready: <a href={singleVideoUrls.pain_story} target="_blank" rel="noopener noreferrer" className="underline">View</a>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => generateSingleVideo('pain_story')}
+                    disabled={isGeneratingSingleVideo.pain_story}
+                    className="mt-3 w-full bg-fuchsia-500 hover:bg-fuchsia-600 disabled:bg-fuchsia-300 text-white text-xs py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isGeneratingSingleVideo.pain_story ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3 h-3" />
+                        Generate This Video
+                      </>
+                    )}
+                  </button>
                 </div>
 
                 {/* Card 3: CTA Closer */}
@@ -1813,6 +2082,28 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                     onKeyDown={(e) => e.stopPropagation()}
                     placeholder="CTA closer prompt..."
                   />
+                  {singleVideoUrls.cta_closer && (
+                    <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-700">
+                      ✅ Video ready: <a href={singleVideoUrls.cta_closer} target="_blank" rel="noopener noreferrer" className="underline">View</a>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => generateSingleVideo('cta_closer')}
+                    disabled={isGeneratingSingleVideo.cta_closer}
+                    className="mt-3 w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-300 text-white text-xs py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isGeneratingSingleVideo.cta_closer ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3 h-3" />
+                        Generate This Video
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -1830,18 +2121,18 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h5 className="font-semibold text-gray-900">Generate Videos with Sora 2</h5>
-                    <p className="text-sm text-gray-500">Start rendering all 3 videos (~5-10 min each)</p>
+                    <h5 className="font-semibold text-gray-900">Generate All 3 Videos at Once</h5>
+                    <p className="text-sm text-gray-500">Render all 3 videos with Sora 2 in Portrait 720x1280 (12s each)</p>
                   </div>
                   <button
                     onClick={generateSoraVideos}
-                    disabled={isGeneratingSoraVideos}
+                    disabled={isGeneratingSoraVideos || !editableSoraPrompts}
                     className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isGeneratingSoraVideos ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>Generating Videos...</span>
+                        <span>Generating (5-15 min)...</span>
                       </>
                     ) : (
                       <>
@@ -1851,6 +2142,19 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                     )}
                   </button>
                 </div>
+                
+                {/* Generation in progress warning */}
+                {isGeneratingSoraVideos && (
+                  <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-800 font-medium flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Videos are being generated and saved to storage...
+                    </p>
+                    <p className="text-xs text-amber-600 mt-1">
+                      ⚠️ Please don&apos;t close this page. This typically takes 5-15 minutes.
+                    </p>
+                  </div>
+                )}
 
                 {/* Video Generation Error */}
                 {soraVideoError && (
@@ -2039,11 +2343,18 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                   className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
                 >
                   {/* Video Preview Area */}
-                  <div className="aspect-video bg-gray-900 flex items-center justify-center relative">
-                    {gen.processing_status === 'raw' || gen.processing_status === 'completed' ? (
+                  <div className="aspect-[9/16] bg-gray-900 flex items-center justify-center relative max-h-80">
+                    {gen.raw_url ? (
+                      <video 
+                        src={gen.raw_url} 
+                        controls 
+                        className="w-full h-full object-contain"
+                        preload="metadata"
+                      />
+                    ) : gen.processing_status === 'raw' || gen.processing_status === 'completed' ? (
                       <div className="text-center">
                         <Play className="w-12 h-12 text-white/50 mx-auto mb-2" />
-                        <p className="text-white/70 text-xs">Video Ready</p>
+                        <p className="text-white/70 text-xs">Video Ready (No URL)</p>
                       </div>
                     ) : gen.processing_status === 'generating' ? (
                       <div className="text-center">
