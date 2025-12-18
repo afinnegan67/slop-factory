@@ -1,10 +1,47 @@
 'use client';
 
-import { useState } from 'react';
-import { Play, Sparkles, Video, Upload, TrendingUp, BarChart3, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, ChevronRight, Mic, FileText, Wand2, Facebook, DollarSign, Target, Zap, ArrowRight, Brain, Layers, Activity } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Play, Sparkles, Video, Upload, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, Eye, ThumbsUp, Loader2, X, ImageIcon } from 'lucide-react';
+
+// Types
+interface PainAngle {
+  id: string;
+  title: string;
+  description: string;
+  visceral_phrase: string | null;
+  category: string | null;
+  intensity_score: number | null;
+  is_approved: boolean;
+  times_used: number;
+}
+
+interface VisualHook {
+  id: string;
+  pain_angle_id: string;
+  scene_description: string;
+  scene_setting: string;
+  scene_mood: string;
+  headline_text: string;
+  subheadline_text: string;
+  cta_text: string;
+  spoken_script: string;
+  voice_tone: string;
+  status: string;
+}
 
 export default function SlopFactoryDashboard() {
   const [activeTab, setActiveTab] = useState('script');
+  
+  // Research state
+  const [researchTopic, setResearchTopic] = useState('');
+  const [isResearching, setIsResearching] = useState(false);
+  const [painAngles, setPainAngles] = useState<PainAngle[]>([]);
+  const [selectedAngle, setSelectedAngle] = useState<PainAngle | null>(null);
+  
+  // Visual hook state
+  const [isGeneratingHook, setIsGeneratingHook] = useState(false);
+  const [generatedHook, setGeneratedHook] = useState<VisualHook | null>(null);
+  const [showHookModal, setShowHookModal] = useState(false);
 
   const tabs = [
     { id: 'script', name: 'Script Creation', icon: FileText },
@@ -12,9 +49,88 @@ export default function SlopFactoryDashboard() {
     { id: 'meta', name: 'Meta', icon: Facebook }
   ];
 
+  // Start deep research
+  const startResearch = async () => {
+    if (!researchTopic.trim()) return;
+    
+    setIsResearching(true);
+    try {
+      const response = await fetch('/api/research/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: researchTopic,
+          targetAudience: 'residential contractors',
+          researchDepth: 'comprehensive'
+        })
+      });
+      
+      const data = await response.json();
+      if (data.pain_angles) {
+        setPainAngles(data.pain_angles);
+      }
+    } catch (error) {
+      console.error('Research failed:', error);
+    } finally {
+      setIsResearching(false);
+    }
+  };
+
+  // Generate visual hook for a pain angle
+  const generateVisualHook = async (painAngle: PainAngle) => {
+    setSelectedAngle(painAngle);
+    setIsGeneratingHook(true);
+    setShowHookModal(true);
+    
+    try {
+      const response = await fetch('/api/hooks/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pain_angle_id: painAngle.id })
+      });
+      
+      const data = await response.json();
+      if (data.visual_hook) {
+        setGeneratedHook(data.visual_hook);
+      }
+    } catch (error) {
+      console.error('Hook generation failed:', error);
+    } finally {
+      setIsGeneratingHook(false);
+    }
+  };
+
+  // Approve a pain angle
+  const approvePainAngle = async (id: string) => {
+    try {
+      await fetch('/api/research/angles', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, is_approved: true })
+      });
+      
+      setPainAngles(prev => prev.map(a => 
+        a.id === id ? { ...a, is_approved: true } : a
+      ));
+    } catch (error) {
+      console.error('Failed to approve:', error);
+    }
+  };
+
+  const getCategoryColor = (category: string | null) => {
+    const colors: Record<string, string> = {
+      financial: 'bg-green-100 text-green-700',
+      time: 'bg-blue-100 text-blue-700',
+      family: 'bg-pink-100 text-pink-700',
+      stress: 'bg-orange-100 text-orange-700',
+      reputation: 'bg-purple-100 text-purple-700'
+    };
+    return colors[category || ''] || 'bg-gray-100 text-gray-700';
+  };
+
   const ScriptCreationTab = () => (
     <div className="space-y-8">
-      {/* Pain Research Section */}
+      {/* Pain Research Section - NEW */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
         <div className="px-8 py-6 border-b border-gray-100">
           <div className="flex items-center space-x-3">
@@ -23,41 +139,141 @@ export default function SlopFactoryDashboard() {
             </div>
             <div>
               <h3 className="text-xl font-semibold text-gray-900">Pain Point Research</h3>
-              <p className="text-sm text-gray-500">Generate visceral contractor pain angles</p>
+              <p className="text-sm text-gray-500">AI-powered deep research to uncover visceral contractor pain angles</p>
             </div>
           </div>
         </div>
         <div className="p-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-2xl p-6">
-              <h4 className="font-semibold text-gray-900 mb-4 flex items-center space-x-2">
-                <Activity className="w-4 h-4 text-indigo-600" />
-                <span>Active Pain Points</span>
-              </h4>
-              <div className="space-y-3">
-                {[
-                  'Working for free (handshake = $10k loss)',
-                  'Late night paperwork at dining table',
-                  'Missing family events',
-                  'Client interrogation calls on the road'
-                ].map((pain, index) => (
-                  <div key={index} className="flex items-start space-x-3 p-3 bg-white rounded-xl shadow-sm">
-                    <div className="w-2 h-2 bg-green-500 rounded-full mt-1.5"></div>
-                    <span className="text-sm text-gray-700 flex-1">{pain}</span>
+          {/* Research Input */}
+          <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-6 text-white mb-6">
+            <h4 className="font-semibold mb-2">🔬 Deep Research Mode</h4>
+            <p className="text-sm text-blue-100 mb-4">Enter a topic and ChatGPT will conduct comprehensive research, then extract the most visceral pain angles.</p>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={researchTopic}
+                onChange={(e) => setResearchTopic(e.target.value)}
+                placeholder="e.g., Change orders and scope creep frustrations"
+                className="flex-1 px-4 py-3 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-white"
+                onKeyDown={(e) => e.key === 'Enter' && startResearch()}
+              />
+              <button
+                onClick={startResearch}
+                disabled={isResearching || !researchTopic.trim()}
+                className="bg-white text-blue-600 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isResearching ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Researching...</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-5 h-5" />
+                    <span>Start Research</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Research Progress */}
+          {isResearching && (
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100/30 rounded-2xl p-6 mb-6">
+              <div className="flex items-center space-x-3 mb-4">
+                <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                <span className="font-semibold text-gray-900">Deep Research in Progress...</span>
+              </div>
+              <div className="space-y-2 text-sm text-gray-600">
+                <p>✓ Analyzing contractor frustrations...</p>
+                <p>✓ Identifying emotional triggers...</p>
+                <p className="text-indigo-600">→ Extracting visceral pain angles...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Pain Angles Grid */}
+          {painAngles.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-semibold text-gray-900 flex items-center space-x-2">
+                  <Activity className="w-4 h-4 text-indigo-600" />
+                  <span>Discovered Pain Angles ({painAngles.length})</span>
+                </h4>
+                <span className="text-sm text-gray-500">Click to generate visual hooks</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {painAngles.map((angle) => (
+                  <div
+                    key={angle.id}
+                    className={`p-5 rounded-2xl border-2 transition-all duration-200 cursor-pointer hover:shadow-lg ${
+                      angle.is_approved 
+                        ? 'bg-green-50 border-green-200' 
+                        : 'bg-white border-gray-200 hover:border-indigo-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h5 className="font-semibold text-gray-900">{angle.title}</h5>
+                          {angle.intensity_score && (
+                            <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
+                              🔥 {angle.intensity_score}/10
+                            </span>
+                          )}
+                        </div>
+                        {angle.visceral_phrase && (
+                          <p className="text-indigo-600 font-medium text-sm mb-2">"{angle.visceral_phrase}"</p>
+                        )}
+                        <p className="text-sm text-gray-600">{angle.description}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                      <div className="flex items-center gap-2">
+                        {angle.category && (
+                          <span className={`text-xs px-2 py-1 rounded-full ${getCategoryColor(angle.category)}`}>
+                            {angle.category}
+                          </span>
+                        )}
+                        {angle.is_approved && (
+                          <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3" /> Approved
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!angle.is_approved && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); approvePainAngle(angle.id); }}
+                            className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            title="Approve"
+                          >
+                            <ThumbsUp className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => generateVisualHook(angle)}
+                          className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-1"
+                        >
+                          <ImageIcon className="w-3 h-3" />
+                          Generate Hook
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-            
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-6 text-white">
-              <h4 className="font-semibold mb-4">Research New Angles</h4>
-              <p className="text-sm text-blue-100 mb-6">AI-powered research will find fresh pain points that resonate with contractors</p>
-              <button className="w-full bg-white text-blue-600 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2">
-                <Sparkles className="w-5 h-5" />
-                <span>Generate 5 New Pain Points</span>
-              </button>
+          )}
+
+          {/* Empty State */}
+          {!isResearching && painAngles.length === 0 && (
+            <div className="text-center py-12 text-gray-500">
+              <Brain className="w-12 h-12 mx-auto mb-4 opacity-30" />
+              <p>Enter a research topic above to discover pain angles</p>
+              <p className="text-sm mt-1">Example: "Scheduling conflicts and crew management"</p>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -96,12 +312,27 @@ export default function SlopFactoryDashboard() {
           </div>
           
           <div className="mb-8">
-            <label className="block text-sm font-semibold text-gray-700 mb-3">Select Pain Points</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">
+              Select Pain Points {painAngles.filter(a => a.is_approved).length > 0 && `(${painAngles.filter(a => a.is_approved).length} approved)`}
+            </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {['Working for free', 'Late night paperwork', 'Missing family events', 'Client interrogation calls'].map((pain, index) => (
-                <label key={index} className="flex items-center space-x-3 p-4 bg-gray-50 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
+              {(painAngles.filter(a => a.is_approved).length > 0 
+                ? painAngles.filter(a => a.is_approved) 
+                : [
+                    { id: '1', title: 'Working for free', visceral_phrase: 'Handshake = $10k loss' },
+                    { id: '2', title: 'Late night paperwork', visceral_phrase: 'Dining table = office' },
+                    { id: '3', title: 'Missing family events', visceral_phrase: 'Another missed game' },
+                    { id: '4', title: 'Client interrogation calls', visceral_phrase: 'Where are you?!' }
+                  ]
+              ).map((pain) => (
+                <label key={pain.id} className="flex items-center space-x-3 p-4 bg-gray-50 border-2 border-gray-200 rounded-xl cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
                   <input type="checkbox" className="w-5 h-5 rounded-lg text-blue-600 focus:ring-blue-500" />
-                  <span className="text-sm font-medium text-gray-700">{pain}</span>
+                  <div>
+                    <span className="text-sm font-medium text-gray-700 block">{pain.title}</span>
+                    {pain.visceral_phrase && (
+                      <span className="text-xs text-indigo-600">"{pain.visceral_phrase}"</span>
+                    )}
+                  </div>
                 </label>
               ))}
             </div>
@@ -156,6 +387,98 @@ export default function SlopFactoryDashboard() {
           <ArrowRight className="w-5 h-5" />
         </button>
       </div>
+
+      {/* Visual Hook Modal */}
+      {showHookModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">Visual Hook Generator</h3>
+                <p className="text-sm text-gray-500">{selectedAngle?.title}</p>
+              </div>
+              <button
+                onClick={() => { setShowHookModal(false); setGeneratedHook(null); }}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              {isGeneratingHook ? (
+                <div className="text-center py-12">
+                  <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" />
+                  <p className="text-gray-600">Generating visual hook...</p>
+                  <p className="text-sm text-gray-400 mt-1">Creating scene, copy, and script</p>
+                </div>
+              ) : generatedHook ? (
+                <div className="space-y-6">
+                  {/* Scene Description */}
+                  <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-5">
+                    <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                      <Video className="w-4 h-4 text-purple-600" />
+                      Scene Description (for Sora)
+                    </h4>
+                    <p className="text-gray-700">{generatedHook.scene_description}</p>
+                    <div className="flex gap-2 mt-3">
+                      <span className="text-xs px-2 py-1 bg-white rounded-full text-gray-600">
+                        📍 {generatedHook.scene_setting}
+                      </span>
+                      <span className="text-xs px-2 py-1 bg-white rounded-full text-gray-600">
+                        😔 {generatedHook.scene_mood}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* On-Screen Text */}
+                  <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-5">
+                    <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-600" />
+                      On-Screen Text Copy
+                    </h4>
+                    <div className="space-y-2">
+                      <div className="bg-white rounded-lg p-3">
+                        <span className="text-xs text-gray-400 block mb-1">HEADLINE</span>
+                        <p className="text-2xl font-bold text-gray-900">{generatedHook.headline_text}</p>
+                      </div>
+                      <div className="bg-white rounded-lg p-3">
+                        <span className="text-xs text-gray-400 block mb-1">SUBHEADLINE</span>
+                        <p className="text-lg text-gray-700">{generatedHook.subheadline_text}</p>
+                      </div>
+                      <div className="bg-white rounded-lg p-3">
+                        <span className="text-xs text-gray-400 block mb-1">CTA</span>
+                        <p className="text-blue-600 font-medium">{generatedHook.cta_text}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Spoken Script */}
+                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-5">
+                    <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                      <Mic className="w-4 h-4 text-green-600" />
+                      Spoken Script (for ElevenLabs)
+                    </h4>
+                    <p className="text-gray-700 italic">"{generatedHook.spoken_script}"</p>
+                    <span className="text-xs text-gray-500 mt-2 block">
+                      Voice tone: {generatedHook.voice_tone}
+                    </span>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-3 pt-4">
+                    <button className="flex-1 bg-indigo-600 text-white px-4 py-3 rounded-xl font-semibold hover:bg-indigo-700 transition-colors">
+                      Save Hook
+                    </button>
+                    <button className="flex-1 bg-gray-100 text-gray-700 px-4 py-3 rounded-xl font-semibold hover:bg-gray-200 transition-colors">
+                      Regenerate
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -424,7 +747,7 @@ export default function SlopFactoryDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Modern Header with Blue to White Gradient */}
+      {/* Modern Header */}
       <div className="bg-blue-900 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-8">
@@ -435,7 +758,7 @@ export default function SlopFactoryDashboard() {
                 </div>
                 <div>
                   <h1 className="text-3xl font-bold text-white">The Slop Factory</h1>
-                  <p className="text-blue-100">Automated Ad Generation Pipeline</p>
+                  <p className="text-blue-200">Automated Ad Generation Pipeline</p>
                 </div>
               </div>
               <button className="p-3 text-white/80 hover:text-white transition-colors bg-white/10 rounded-xl hover:bg-white/20">
@@ -476,4 +799,3 @@ export default function SlopFactoryDashboard() {
     </div>
   );
 }
-
