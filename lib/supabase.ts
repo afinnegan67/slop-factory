@@ -237,3 +237,20 @@ export interface EditorPackage {
   created_at: string;
   completed_at: string | null;
 }
+
+export interface VideoAssetManifest {
+  id: string;
+  batch_id: string;
+  visual_hook_video_id: string | null;
+  pain_story_video_id: string | null;
+  cta_closer_video_id: string | null;
+  voiceover_batch_id: string | null;
+  product_demo_id: string | null;
+  background_music_id: string | null;
+  sound_effects: Array<{ effect_id: string; timing: number; volume: number }>;
+  caption_style: string;
+  transition_style: string;
+  is_locked: boolean;
+  created_at: string;
+  updated_at: string;
+}

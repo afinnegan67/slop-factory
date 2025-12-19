@@ -100,8 +100,28 @@ export async function POST(request: NextRequest) {
       .from('sora-videos')
       .getPublicUrl(`audio/${fileName}`);
 
-    console.log('=== AUDIO GENERATION COMPLETE ===');
     console.log('Audio URL:', urlData.publicUrl);
+
+    // Save to production_batches so we can retrieve it later
+    const { data: batchData, error: batchError } = await supabase
+      .from('production_batches')
+      .insert({
+        elevenlabs_text: script_text,
+        audio_url: urlData.publicUrl,
+        current_status: 'audio_complete',
+        batch_name: `Audio ${new Date().toLocaleString()}`
+      })
+      .select()
+      .single();
+
+    if (batchError) {
+      console.error('Failed to save production batch:', batchError);
+      // Continue anyway - audio is still available
+    } else {
+      console.log('Production batch created:', batchData.id);
+    }
+
+    console.log('=== AUDIO GENERATION COMPLETE ===');
 
     return NextResponse.json({
       success: true,
@@ -109,6 +129,7 @@ export async function POST(request: NextRequest) {
         url: urlData.publicUrl,
         fileName: fileName,
         size: buffer.length,
+        batch_id: batchData?.id || null,
       },
     });
   } catch (error) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Play, Video, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, ThumbsUp, Loader2, X, ImageIcon, Sparkles, ChevronDown, Save, ExternalLink, Package, Music, Volume2, Film, CheckCircle2, Circle } from 'lucide-react';
+import { Play, Video, Settings, RefreshCw, CheckCircle, Clock, AlertCircle, Mic, FileText, Wand2, Facebook, DollarSign, Zap, ArrowRight, Brain, Layers, Activity, Search, ThumbsUp, Loader2, X, ImageIcon, Sparkles, ChevronDown, Save, ExternalLink, Package, Music, Volume2, Film, CheckCircle2, Circle, Lock } from 'lucide-react';
 
 // Types matching new schema
 interface PainPoint {
@@ -200,8 +200,86 @@ export default function SlopFactoryDashboard() {
   const [isInitializingEditor, setIsInitializingEditor] = useState(false);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
 
+  // Asset Manifest state for video editing
+  interface SoraVideoAsset {
+    id: string;
+    sora_generation_id: string;
+    sora_prompt_used: string;
+    processing_status: string;
+    raw_url: string | null;
+    processed_url: string | null;
+    created_at: string;
+  }
+  interface MediaAsset {
+    id: string;
+    asset_name: string;
+    file_url: string;
+    duration_seconds: number | null;
+    tags: string[] | null;
+  }
+  interface ProductDemoAsset {
+    id: string;
+    demo_video_url: string;
+    demo_duration_seconds?: number | null;
+    asset_name?: string;
+    products?: { id: string; name: string; price_cents: number };
+  }
+  interface AvailableAssets {
+    sora_videos: {
+      visual_hook: SoraVideoAsset[];
+      pain_story: SoraVideoAsset[];
+      cta_closer: SoraVideoAsset[];
+      uncategorized: SoraVideoAsset[];
+    };
+    all_sora_videos: SoraVideoAsset[];
+    background_music: MediaAsset[];
+    sound_effects: MediaAsset[];
+    product_demos: ProductDemoAsset[];
+    voiceover: { batch_id: string | null; audio_url: string | null };
+  }
+  interface ManifestSelections {
+    visual_hook: SoraVideoAsset | null;
+    pain_story: SoraVideoAsset | null;
+    cta_closer: SoraVideoAsset | null;
+    voiceover_batch_id: string | null;
+    product_demo: ProductDemoAsset | null;
+    background_music: MediaAsset | null;
+    sound_effects: Array<{ effect_id: string; timing: number; volume: number; asset?: MediaAsset }>;
+    caption_style: string;
+    transition_style: string;
+  }
+  const [availableAssets, setAvailableAssets] = useState<AvailableAssets | null>(null);
+  const [manifestSelections, setManifestSelections] = useState<ManifestSelections>({
+    visual_hook: null,
+    pain_story: null,
+    cta_closer: null,
+    voiceover_batch_id: null,
+    product_demo: null,
+    background_music: null,
+    sound_effects: [],
+    caption_style: 'bold_yellow',
+    transition_style: 'hard_cuts'
+  });
+  const [manifestId, setManifestId] = useState<string | null>(null);
+  const [isManifestLocked, setIsManifestLocked] = useState(false);
+  const [isSavingManifest, setIsSavingManifest] = useState(false);
+  const [manifestStatus, setManifestStatus] = useState<string>('');
+  const [savedDrafts, setSavedDrafts] = useState<Array<{
+    id: string;
+    batch_id: string;
+    is_locked: boolean;
+    created_at: string;
+    updated_at: string;
+    resolved_assets?: Record<string, unknown>;
+    draft_name?: string;
+  }>>([]);
+  const [showDraftsPanel, setShowDraftsPanel] = useState(false);
+  const [draftName, setDraftName] = useState('');
+
   const tabs = [
-    { id: 'script', name: 'Asset Creation', icon: FileText },
+    { id: 'script', name: 'Research', icon: FileText },
+    { id: 'concept', name: 'Concept', icon: Sparkles },
+    { id: 'videogen', name: 'Video Gen', icon: Film },
     { id: 'video', name: 'Video Editing', icon: Video },
     { id: 'meta', name: 'Meta', icon: Facebook }
   ];
@@ -215,11 +293,19 @@ export default function SlopFactoryDashboard() {
 
   // Refresh saved hook briefs when switching to script tab
   useEffect(() => {
-    if (activeTab === 'script') {
+    if (activeTab === 'script' || activeTab === 'concept') {
       loadSavedHookBriefs();
     }
-    if (activeTab === 'video') {
+    if (activeTab === 'video' || activeTab === 'videogen') {
       loadSoraGenerations();
+    }
+  }, [activeTab]);
+
+  // Auto-scroll to the selected tab content for clarity
+  useEffect(() => {
+    const targetId = activeTab === 'concept' ? 'concept-section' : activeTab === 'script' ? 'script-section' : null;
+    if (targetId) {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [activeTab]);
 
@@ -281,6 +367,232 @@ export default function SlopFactoryDashboard() {
       setIsInitializingEditor(false);
     }
   };
+
+  // Load available assets for manifest configuration
+  const loadAvailableAssets = async () => {
+    try {
+      setManifestStatus('Loading available assets...');
+      // Use load_recent=true to get recent videos regardless of batch_id
+      const res = await fetch('/api/manifests?load_recent=true');
+      const data = await res.json();
+      
+      if (data.success) {
+        setAvailableAssets(data.available_assets);
+        
+        // Set the batch_id from the response (most recent batch with audio)
+        if (data.batch_id) {
+          setCurrentBatchId(data.batch_id);
+        }
+        
+        // If there's an existing manifest, load its selections
+        if (data.manifest) {
+          setManifestId(data.manifest.id);
+          setIsManifestLocked(data.manifest.is_locked);
+          
+          // Find and set the selected assets from the manifest
+          const allVideos = data.available_assets.all_sora_videos || [];
+          setManifestSelections({
+            visual_hook: allVideos.find((v: SoraVideoAsset) => v.id === data.manifest.visual_hook_video_id) || null,
+            pain_story: allVideos.find((v: SoraVideoAsset) => v.id === data.manifest.pain_story_video_id) || null,
+            cta_closer: allVideos.find((v: SoraVideoAsset) => v.id === data.manifest.cta_closer_video_id) || null,
+            voiceover_batch_id: data.manifest.voiceover_batch_id,
+            product_demo: data.available_assets.product_demos?.find((d: ProductDemoAsset) => d.id === data.manifest.product_demo_id) || null,
+            background_music: data.available_assets.background_music?.find((m: MediaAsset) => m.id === data.manifest.background_music_id) || null,
+            sound_effects: data.manifest.sound_effects || [],
+            caption_style: data.manifest.caption_style || 'bold_yellow',
+            transition_style: data.manifest.transition_style || 'hard_cuts'
+          });
+        }
+        
+        // Auto-select voiceover batch
+        if (data.available_assets.voiceover?.batch_id) {
+          setCurrentBatchId(data.available_assets.voiceover.batch_id);
+          setManifestSelections(prev => ({
+            ...prev,
+            voiceover_batch_id: data.available_assets.voiceover.batch_id
+          }));
+        }
+        
+        const videoCount = data.available_assets.all_sora_videos?.length || 0;
+        const hasAudio = !!data.available_assets.voiceover?.audio_url;
+        setManifestStatus(`✅ Loaded ${videoCount} videos${hasAudio ? ' + voiceover' : ''}`);
+      } else {
+        setManifestStatus(`❌ ${data.error || 'Failed to load assets'}`);
+      }
+    } catch (e) {
+      console.error('Failed to load available assets:', e);
+      setManifestStatus('❌ Failed to load assets');
+    }
+  };
+
+  // Save manifest selections
+  const saveManifest = async (lockAfterSave = false) => {
+    // Use voiceover batch_id if no currentBatchId
+    const batchId = currentBatchId || manifestSelections.voiceover_batch_id;
+    
+    if (!batchId) {
+      setManifestStatus('❌ No batch available - generate voiceover first');
+      return;
+    }
+    
+    setIsSavingManifest(true);
+    setManifestStatus('Saving manifest...');
+    
+    try {
+      // Build the resolved assets "treasure map" with all URLs
+      const resolvedAssets = {
+        sora_videos: {
+          visual_hook: manifestSelections.visual_hook ? {
+            id: manifestSelections.visual_hook.id,
+            url: manifestSelections.visual_hook.raw_url || manifestSelections.visual_hook.processed_url,
+            prompt: manifestSelections.visual_hook.sora_prompt_used
+          } : null,
+          pain_story: manifestSelections.pain_story ? {
+            id: manifestSelections.pain_story.id,
+            url: manifestSelections.pain_story.raw_url || manifestSelections.pain_story.processed_url,
+            prompt: manifestSelections.pain_story.sora_prompt_used
+          } : null,
+          cta_closer: manifestSelections.cta_closer ? {
+            id: manifestSelections.cta_closer.id,
+            url: manifestSelections.cta_closer.raw_url || manifestSelections.cta_closer.processed_url,
+            prompt: manifestSelections.cta_closer.sora_prompt_used
+          } : null
+        },
+        voiceover: {
+          batch_id: manifestSelections.voiceover_batch_id || batchId,
+          url: availableAssets?.voiceover?.audio_url
+        },
+        background_music: manifestSelections.background_music ? {
+          id: manifestSelections.background_music.id,
+          name: manifestSelections.background_music.asset_name,
+          url: manifestSelections.background_music.file_url
+        } : null,
+        sound_effects: manifestSelections.sound_effects.map(sfx => ({
+          id: sfx.effect_id,
+          name: sfx.asset?.asset_name,
+          url: sfx.asset?.file_url,
+          timing: sfx.timing,
+          volume: sfx.volume
+        })),
+        product_demo: manifestSelections.product_demo ? {
+          id: manifestSelections.product_demo.id,
+          name: manifestSelections.product_demo.asset_name,
+          url: manifestSelections.product_demo.demo_video_url
+        } : null,
+        settings: {
+          caption_style: manifestSelections.caption_style,
+          transition_style: manifestSelections.transition_style
+        }
+      };
+
+      const res = await fetch('/api/manifests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batch_id: batchId,
+          draft_name: draftName || `Draft ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
+          visual_hook_video_id: manifestSelections.visual_hook?.id,
+          pain_story_video_id: manifestSelections.pain_story?.id,
+          cta_closer_video_id: manifestSelections.cta_closer?.id,
+          voiceover_batch_id: manifestSelections.voiceover_batch_id || batchId,
+          product_demo_id: manifestSelections.product_demo?.id,
+          background_music_id: manifestSelections.background_music?.id,
+          sound_effects: manifestSelections.sound_effects,
+          caption_style: manifestSelections.caption_style,
+          transition_style: manifestSelections.transition_style,
+          is_locked: lockAfterSave,
+          resolved_assets: resolvedAssets // The "treasure map" for the AI agent
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        setManifestId(data.manifest.id);
+        setIsManifestLocked(data.manifest.is_locked);
+        setManifestStatus(lockAfterSave ? '✅ Manifest locked and ready for agent!' : '✅ Draft saved! Agent endpoint ready.');
+        // Refresh saved drafts list
+        loadSavedDrafts();
+      } else {
+        setManifestStatus(`❌ ${data.error}`);
+      }
+    } catch (e) {
+      console.error('Failed to save manifest:', e);
+      setManifestStatus('❌ Failed to save manifest');
+    } finally {
+      setIsSavingManifest(false);
+    }
+  };
+
+  // Load all saved drafts/manifests
+  const loadSavedDrafts = async () => {
+    try {
+      const res = await fetch('/api/manifests');
+      const data = await res.json();
+      if (data.success && data.manifests) {
+        setSavedDrafts(data.manifests);
+      }
+    } catch (e) {
+      console.error('Failed to load saved drafts:', e);
+    }
+  };
+
+  // Load a specific draft and populate the selections
+  const loadDraft = async (draftId: string) => {
+    try {
+      setManifestStatus('Loading draft...');
+      
+      // First load the manifest
+      const manifestRes = await fetch(`/api/manifests?manifest_id=${draftId}`);
+      const manifestData = await manifestRes.json();
+      
+      if (!manifestData.success) {
+        setManifestStatus('❌ Failed to load draft');
+        return;
+      }
+
+      const manifest = manifestData.manifest;
+      setManifestId(manifest.id);
+      setCurrentBatchId(manifest.batch_id);
+      setIsManifestLocked(manifest.is_locked);
+
+      // Now load the available assets to get the full objects
+      await loadAvailableAssets();
+
+      // Wait a bit for assets to load, then set selections based on manifest IDs
+      setTimeout(() => {
+        if (availableAssets) {
+          const allVideos = availableAssets.all_sora_videos || [];
+          setManifestSelections(prev => ({
+            ...prev,
+            visual_hook: allVideos.find((v: SoraVideoAsset) => v.id === manifest.visual_hook_video_id) || null,
+            pain_story: allVideos.find((v: SoraVideoAsset) => v.id === manifest.pain_story_video_id) || null,
+            cta_closer: allVideos.find((v: SoraVideoAsset) => v.id === manifest.cta_closer_video_id) || null,
+            voiceover_batch_id: manifest.voiceover_batch_id,
+            product_demo: availableAssets.product_demos?.find((d: ProductDemoAsset) => d.id === manifest.product_demo_id) || null,
+            background_music: availableAssets.background_music?.find((m: MediaAsset) => m.id === manifest.background_music_id) || null,
+            sound_effects: manifest.sound_effects || [],
+            caption_style: manifest.caption_style || 'bold_yellow',
+            transition_style: manifest.transition_style || 'hard_cuts'
+          }));
+        }
+        setManifestStatus('✅ Draft loaded - you can now edit or regenerate');
+        setShowDraftsPanel(false);
+      }, 500);
+
+    } catch (e) {
+      console.error('Failed to load draft:', e);
+      setManifestStatus('❌ Failed to load draft');
+    }
+  };
+
+  // Check if all required assets are selected
+  const allManifestAssetsSelected = 
+    manifestSelections.visual_hook &&
+    manifestSelections.pain_story &&
+    manifestSelections.cta_closer &&
+    (manifestSelections.voiceover_batch_id || availableAssets?.voiceover?.audio_url) &&
+    manifestSelections.background_music;
 
   const loadProducts = async () => {
     try {
@@ -1090,7 +1402,7 @@ export default function SlopFactoryDashboard() {
   };
 
   const scriptCreationContent = (
-    <div className="space-y-8">
+    <div id="script-section" className="space-y-8">
       {/* Deep Research Section */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
         <div className="px-8 py-6 border-b border-gray-100">
@@ -1365,7 +1677,11 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
           )}
         </div>
       </div>
+    </div>
+  );
 
+  const conceptContent = (
+    <div id="concept-section" className="space-y-8">
       {/* Hook Brief Generation */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
         <div className="px-8 py-6 border-b border-gray-100">
@@ -2004,8 +2320,12 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
           )}
         </div>
       </div>
+    </div>
+  );
 
-      {/* Sora Video Prompts Section - Standalone Card */}
+  const videoGenContent = (
+    <div id="videogen-section" className="space-y-8">
+      {/* Sora Video Prompts Section */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
         <div className="px-8 py-6 border-b border-gray-100">
           <div className="flex items-center justify-between">
@@ -2042,7 +2362,13 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
           {!editableScript && (
             <div className="text-center py-8 text-gray-500">
               <Video className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Generate an ad script first to create Sora video prompts</p>
+              <p className="text-sm">Generate an ad script in the Concept tab first to create Sora video prompts</p>
+              <button
+                onClick={() => setActiveTab('concept')}
+                className="mt-4 text-violet-600 hover:text-violet-700 font-medium text-sm"
+              >
+                Go to Concept Tab →
+              </button>
             </div>
           )}
 
@@ -2517,273 +2843,6 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
         )}
       </div>
 
-      {/* Asset Checklist for Editor */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <button
-          onClick={() => setIsChecklistExpanded(!isChecklistExpanded)}
-          className="w-full px-8 py-6 border-b border-gray-100 hover:bg-gray-50 transition-colors"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center">
-                <Package className="w-5 h-5 text-white" />
-              </div>
-              <div className="text-left">
-                <h3 className="text-xl font-semibold text-gray-900">Editor Asset Checklist</h3>
-                <p className="text-sm text-gray-500">
-                  {assetChecklist ? (
-                    assetChecklist.sora_videos.ready && assetChecklist.voiceover.ready && assetChecklist.background_music.ready && assetChecklist.sound_effects.ready
-                      ? '✅ All assets ready for editing'
-                      : '⏳ Some assets still needed'
-                  ) : 'Click to check asset status'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // Use the first batch ID from sora generations or a mock ID
-                  const batchId = storedSoraGenerations[0]?.id || 'test-batch';
-                  loadAssetChecklist(batchId);
-                }}
-                disabled={isLoadingChecklist}
-                className="text-emerald-600 hover:text-emerald-700 font-medium text-sm flex items-center gap-1"
-              >
-                <RefreshCw className={`w-4 h-4 ${isLoadingChecklist ? 'animate-spin' : ''}`} />
-                Check Status
-              </button>
-              <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isChecklistExpanded ? 'rotate-180' : ''}`} />
-            </div>
-          </div>
-        </button>
-        
-        {isChecklistExpanded && (
-          <div className="p-8">
-            {isLoadingChecklist ? (
-              <div className="text-center py-8">
-                <Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-500 mb-2" />
-                <p className="text-sm text-gray-500">Checking assets...</p>
-              </div>
-            ) : !assetChecklist ? (
-              <div className="text-center py-8 text-gray-500">
-                <Package className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                <h4 className="text-lg font-semibold text-gray-700 mb-2">Check Your Assets</h4>
-                <p className="text-sm mb-4">Click "Check Status" to verify all assets are ready for video editing.</p>
-                <button
-                  onClick={() => {
-                    const batchId = storedSoraGenerations[0]?.id || 'test-batch';
-                    loadAssetChecklist(batchId);
-                  }}
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-                >
-                  Check Asset Status
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Sora Videos Section */}
-                <div className="border border-gray-200 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Video className="w-5 h-5 text-violet-500" />
-                      <h4 className="font-semibold text-gray-900">Sora Videos ({assetChecklist.sora_videos.count}/{assetChecklist.sora_videos.required})</h4>
-                    </div>
-                    {assetChecklist.sora_videos.ready ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                    ) : (
-                      <Circle className="w-5 h-5 text-gray-300" />
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {assetChecklist.sora_videos.videos.length > 0 ? (
-                      assetChecklist.sora_videos.videos.map((video, idx) => (
-                        <div key={video.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${
-                              video.status === 'processed' || video.status === 'raw' || video.status === 'completed'
-                                ? 'bg-emerald-500'
-                                : video.status === 'generating'
-                                ? 'bg-blue-500 animate-pulse'
-                                : 'bg-gray-300'
-                            }`} />
-                            <span className="text-sm text-gray-700">
-                              {idx === 0 ? 'Visual Hook' : idx === 1 ? 'Pain Story' : 'CTA Closer'}
-                            </span>
-                            <span className="text-xs text-gray-400">({video.status})</span>
-                          </div>
-                          {video.url && (
-                            <a
-                              href={video.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-violet-600 hover:text-violet-700 font-medium flex items-center gap-1"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              Preview
-                            </a>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-500 italic">No Sora videos generated yet</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Audio Section */}
-                <div className="border border-gray-200 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Mic className="w-5 h-5 text-orange-500" />
-                      <h4 className="font-semibold text-gray-900">Voiceover Audio</h4>
-                    </div>
-                    {assetChecklist.voiceover.ready ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                    ) : (
-                      <Circle className="w-5 h-5 text-gray-300" />
-                    )}
-                  </div>
-                  {assetChecklist.voiceover.ready ? (
-                    <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                      <span className="text-sm text-gray-700">ElevenLabs Voiceover</span>
-                      {assetChecklist.voiceover.url && (
-                        <a
-                          href={assetChecklist.voiceover.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-orange-600 hover:text-orange-700 font-medium flex items-center gap-1"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Preview
-                        </a>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500 italic">Generate voiceover from your script above</p>
-                  )}
-                </div>
-
-                {/* Product Demo Section */}
-                <div className="border border-gray-200 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Film className="w-5 h-5 text-blue-500" />
-                      <h4 className="font-semibold text-gray-900">Product Demo</h4>
-                    </div>
-                    {assetChecklist.product_demo.ready ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                    ) : (
-                      <Circle className="w-5 h-5 text-amber-400" />
-                    )}
-                  </div>
-                  {assetChecklist.product_demo.ready ? (
-                    <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                      <span className="text-sm text-gray-700">{assetChecklist.product_demo.product_name || 'Product Demo'}</span>
-                      {assetChecklist.product_demo.url && (
-                        <a
-                          href={assetChecklist.product_demo.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Preview
-                        </a>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-amber-600 italic">Optional - Product demo video not configured</p>
-                  )}
-                </div>
-
-                {/* Media Library Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Background Music */}
-                  <div className="border border-gray-200 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Music className="w-5 h-5 text-pink-500" />
-                        <h4 className="font-semibold text-gray-900">Background Music</h4>
-                      </div>
-                      {assetChecklist.background_music.ready ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                      ) : (
-                        <Circle className="w-5 h-5 text-gray-300" />
-                      )}
-                    </div>
-                    {assetChecklist.background_music.ready ? (
-                      <p className="text-sm text-gray-600">{assetChecklist.background_music.count} tracks available</p>
-                    ) : (
-                      <p className="text-sm text-gray-500 italic">No background music uploaded</p>
-                    )}
-                  </div>
-
-                  {/* Sound Effects */}
-                  <div className="border border-gray-200 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Volume2 className="w-5 h-5 text-cyan-500" />
-                        <h4 className="font-semibold text-gray-900">Sound Effects</h4>
-                      </div>
-                      {assetChecklist.sound_effects.ready ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                      ) : (
-                        <Circle className="w-5 h-5 text-gray-300" />
-                      )}
-                    </div>
-                    {assetChecklist.sound_effects.ready ? (
-                      <p className="text-sm text-gray-600">{assetChecklist.sound_effects.count} effects available</p>
-                    ) : (
-                      <p className="text-sm text-gray-500 italic">No sound effects uploaded</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Initialize Editing Button */}
-                <div className="pt-4 border-t border-gray-200">
-                  <button
-                    onClick={initializeEditor}
-                    disabled={
-                      isInitializingEditor ||
-                      !assetChecklist.sora_videos.ready ||
-                      !assetChecklist.voiceover.ready ||
-                      !assetChecklist.background_music.ready ||
-                      !assetChecklist.sound_effects.ready
-                    }
-                    className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-200 flex items-center justify-center gap-3 ${
-                      assetChecklist.sora_videos.ready &&
-                      assetChecklist.voiceover.ready &&
-                      assetChecklist.background_music.ready &&
-                      assetChecklist.sound_effects.ready
-                        ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:shadow-lg hover:scale-[1.02]'
-                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {isInitializingEditor ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Preparing Editor Package...
-                      </>
-                    ) : (
-                      <>
-                        <Zap className="w-5 h-5" />
-                        Initialize Video Editing
-                      </>
-                    )}
-                  </button>
-                  {!(assetChecklist.sora_videos.ready && assetChecklist.voiceover.ready && assetChecklist.background_music.ready && assetChecklist.sound_effects.ready) && (
-                    <p className="text-center text-sm text-gray-500 mt-2">
-                      Complete all required assets above to enable editing
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Next Step */}
       <div className="flex justify-end">
         <button
@@ -2799,13 +2858,539 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
 
   const videoEditingContent = (
     <div className="space-y-8">
-      {/* Video Editing Tools Coming Soon */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-        <div className="text-center py-8 text-gray-500">
-          <Layers className="w-12 h-12 mx-auto mb-4 opacity-30" />
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">Video Editing Tools Coming Soon</h3>
-          <p className="text-sm">Combine videos, add captions, B-roll, and audio in the next phase.</p>
-          <p className="text-xs text-gray-400 mt-2">View your generated videos in the Script Creation tab.</p>
+      {/* Saved Drafts Panel */}
+      {showDraftsPanel && (
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">📁 Saved Drafts (Treasure Maps)</h3>
+            <button
+              onClick={() => setShowDraftsPanel(false)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            Select a saved draft to load its asset configuration. Each draft contains all the URLs the AI agent needs.
+          </p>
+          {savedDrafts.length === 0 ? (
+            <p className="text-sm text-gray-500 italic py-4 text-center">No saved drafts yet. Save your first draft below!</p>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {savedDrafts.map((draft) => (
+                <button
+                  key={draft.id}
+                  onClick={() => loadDraft(draft.id)}
+                  className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all hover:border-blue-300 hover:bg-blue-50 ${
+                    manifestId === draft.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-3 h-3 rounded-full ${draft.is_locked ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-gray-900">
+                        {draft.draft_name || `Draft ${draft.id.slice(0, 8)}`}
+                        {draft.is_locked && <span className="ml-2 text-emerald-600 text-xs">🔒 Locked</span>}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {new Date(draft.created_at).toLocaleDateString()} at {new Date(draft.created_at).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-blue-600 font-medium">Load →</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Asset Control Panel */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+        <div className="px-8 py-6 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                <Layers className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">Configure Video Assets</h3>
+                <p className="text-sm text-gray-500">Select which assets to use for your video generation</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  loadSavedDrafts();
+                  setShowDraftsPanel(!showDraftsPanel);
+                }}
+                className="text-purple-600 hover:text-purple-700 font-medium text-sm flex items-center gap-1 border border-purple-200 px-3 py-1.5 rounded-lg hover:bg-purple-50"
+              >
+                <Layers className="w-4 h-4" />
+                {showDraftsPanel ? 'Hide' : 'View'} Saved Drafts
+              </button>
+              {isManifestLocked && (
+                <span className="flex items-center gap-1 text-emerald-600 text-sm font-medium">
+                  <Lock className="w-4 h-4" />
+                  Locked
+                </span>
+              )}
+              <button
+                onClick={() => loadAvailableAssets()}
+                className="text-blue-600 hover:text-blue-700 font-medium text-sm flex items-center gap-1"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Load Assets
+              </button>
+            </div>
+          </div>
+          {manifestStatus && (
+            <p className={`mt-2 text-sm ${manifestStatus.includes('✅') ? 'text-emerald-600' : manifestStatus.includes('❌') ? 'text-red-600' : 'text-gray-500'}`}>
+              {manifestStatus}
+            </p>
+          )}
+        </div>
+
+        <div className="p-8 space-y-8">
+          {!availableAssets ? (
+            <div className="text-center py-12 text-gray-500">
+              <Video className="w-16 h-16 mx-auto mb-4 opacity-30" />
+              <h4 className="text-lg font-semibold text-gray-700 mb-2">Load Your Assets</h4>
+              <p className="text-sm mb-4">Click &quot;Load Assets&quot; above to load your Sora videos, audio, and media library.</p>
+              <button
+                onClick={() => loadAvailableAssets()}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+              >
+                Load Available Assets
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Sora Video Selection */}
+              <div className="space-y-6">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <Video className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <h4 className="text-lg font-semibold text-gray-900">Sora Video Clips</h4>
+                </div>
+
+                {/* Visual Hook Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Visual Hook (0-17s) {manifestSelections.visual_hook && <span className="text-emerald-500">✓</span>}
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {[...(availableAssets.sora_videos.visual_hook || []), ...(availableAssets.sora_videos.uncategorized || [])].map((video) => (
+                      <button
+                        key={video.id}
+                        onClick={() => !isManifestLocked && setManifestSelections(prev => ({ ...prev, visual_hook: video }))}
+                        disabled={isManifestLocked}
+                        className={`relative aspect-video rounded-xl overflow-hidden border-2 transition-all ${
+                          manifestSelections.visual_hook?.id === video.id
+                            ? 'border-blue-500 ring-2 ring-blue-200'
+                            : 'border-gray-200 hover:border-blue-300'
+                        } ${isManifestLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                        <video 
+                          src={video.processed_url || video.raw_url || ''} 
+                          className="w-full h-full object-cover"
+                          muted
+                          onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                          onMouseLeave={(e) => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
+                        />
+                        <div className="absolute bottom-2 left-2 right-2">
+                          <p className="text-xs text-white truncate">{video.sora_prompt_used?.substring(0, 50)}...</p>
+                        </div>
+                        {manifestSelections.visual_hook?.id === video.id && (
+                          <div className="absolute top-2 right-2 bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-medium">
+                            Selected
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                    {availableAssets.sora_videos.visual_hook?.length === 0 && availableAssets.sora_videos.uncategorized?.length === 0 && (
+                      <p className="text-sm text-gray-500 italic col-span-3">No videos available - generate Sora videos first</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pain Story Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Pain Story (17-28s) {manifestSelections.pain_story && <span className="text-emerald-500">✓</span>}
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {[...(availableAssets.sora_videos.pain_story || []), ...(availableAssets.sora_videos.uncategorized || [])].map((video) => (
+                      <button
+                        key={video.id}
+                        onClick={() => !isManifestLocked && setManifestSelections(prev => ({ ...prev, pain_story: video }))}
+                        disabled={isManifestLocked}
+                        className={`relative aspect-video rounded-xl overflow-hidden border-2 transition-all ${
+                          manifestSelections.pain_story?.id === video.id
+                            ? 'border-blue-500 ring-2 ring-blue-200'
+                            : 'border-gray-200 hover:border-blue-300'
+                        } ${isManifestLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                        <video 
+                          src={video.processed_url || video.raw_url || ''} 
+                          className="w-full h-full object-cover"
+                          muted
+                          onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                          onMouseLeave={(e) => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
+                        />
+                        <div className="absolute bottom-2 left-2 right-2">
+                          <p className="text-xs text-white truncate">{video.sora_prompt_used?.substring(0, 50)}...</p>
+                        </div>
+                        {manifestSelections.pain_story?.id === video.id && (
+                          <div className="absolute top-2 right-2 bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-medium">
+                            Selected
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* CTA Closer Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    CTA Closer (59-64s) {manifestSelections.cta_closer && <span className="text-emerald-500">✓</span>}
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {[...(availableAssets.sora_videos.cta_closer || []), ...(availableAssets.sora_videos.uncategorized || [])].map((video) => (
+                      <button
+                        key={video.id}
+                        onClick={() => !isManifestLocked && setManifestSelections(prev => ({ ...prev, cta_closer: video }))}
+                        disabled={isManifestLocked}
+                        className={`relative aspect-video rounded-xl overflow-hidden border-2 transition-all ${
+                          manifestSelections.cta_closer?.id === video.id
+                            ? 'border-blue-500 ring-2 ring-blue-200'
+                            : 'border-gray-200 hover:border-blue-300'
+                        } ${isManifestLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                        <video 
+                          src={video.processed_url || video.raw_url || ''} 
+                          className="w-full h-full object-cover"
+                          muted
+                          onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                          onMouseLeave={(e) => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }}
+                        />
+                        <div className="absolute bottom-2 left-2 right-2">
+                          <p className="text-xs text-white truncate">{video.sora_prompt_used?.substring(0, 50)}...</p>
+                        </div>
+                        {manifestSelections.cta_closer?.id === video.id && (
+                          <div className="absolute top-2 right-2 bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-medium">
+                            Selected
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Audio Selection */}
+              <div className="border-t border-gray-200 pt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                      <Mic className="w-5 h-5 text-purple-600" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-gray-900">
+                      Voiceover Audio {availableAssets.voiceover?.audio_url && <span className="text-emerald-500">✓</span>}
+                    </h4>
+                  </div>
+                  {availableAssets.voiceover?.batch_id && (
+                    <span className="text-xs text-gray-400">Batch: {availableAssets.voiceover.batch_id.slice(0, 8)}...</span>
+                  )}
+                </div>
+
+                {availableAssets.voiceover?.audio_url ? (
+                  <div className="flex items-center justify-between p-4 bg-purple-50 rounded-xl border-2 border-purple-200">
+                    <div>
+                      <p className="font-medium text-gray-900">ElevenLabs Voiceover</p>
+                      <p className="text-sm text-gray-600">Generated from your script</p>
+                    </div>
+                    <audio controls src={availableAssets.voiceover.audio_url} className="h-10" />
+                  </div>
+                ) : (
+                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
+                    <p className="text-sm text-amber-700">
+                      <strong>No voiceover found.</strong> Generate audio from your script in the Concept tab first, then click &quot;Load Assets&quot; again.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Background Music Selection */}
+              <div className="border-t border-gray-200 pt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                      <Music className="w-5 h-5 text-green-600" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-gray-900">
+                      Background Music {manifestSelections.background_music && <span className="text-emerald-500">✓</span>}
+                    </h4>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    {availableAssets.background_music?.length || 0} tracks available
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {availableAssets.background_music?.map((music) => (
+                    <button
+                      key={music.id}
+                      onClick={() => !isManifestLocked && setManifestSelections(prev => ({ ...prev, background_music: music }))}
+                      disabled={isManifestLocked}
+                      className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
+                        manifestSelections.background_music?.id === music.id
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-gray-200 hover:border-green-300'
+                      } ${isManifestLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                          manifestSelections.background_music?.id === music.id 
+                            ? 'bg-green-500 border-green-500' 
+                            : 'border-gray-300'
+                        }`}>
+                          {manifestSelections.background_music?.id === music.id && (
+                            <div className="w-2 h-2 bg-white rounded-full" />
+                          )}
+                        </div>
+                        <div className="text-left">
+                          <p className="font-medium text-gray-900">{music.asset_name}</p>
+                        </div>
+                      </div>
+                      <audio controls src={music.file_url} className="h-10" onClick={(e) => e.stopPropagation()} />
+                    </button>
+                  ))}
+                  {(!availableAssets.background_music || availableAssets.background_music.length === 0) && (
+                    <p className="text-sm text-gray-500 italic">No background music found in media-library/background-music bucket</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Sound Effects Selection */}
+              <div className="border-t border-gray-200 pt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-yellow-100 rounded-xl flex items-center justify-center">
+                      <Volume2 className="w-5 h-5 text-yellow-600" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-gray-900">
+                      Sound Effects 
+                      {manifestSelections.sound_effects.length > 0 && (
+                        <span className="text-emerald-500 ml-1">({manifestSelections.sound_effects.length} selected)</span>
+                      )}
+                    </h4>
+                  </div>
+                  <p className="text-sm text-gray-500">Select sound effects to include in your video</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {availableAssets.sound_effects?.map((sfx) => {
+                    const isSelected = manifestSelections.sound_effects.some(s => s.effect_id === sfx.id);
+                    return (
+                      <button
+                        key={sfx.id}
+                        onClick={() => {
+                          if (isManifestLocked) return;
+                          setManifestSelections(prev => ({
+                            ...prev,
+                            sound_effects: isSelected
+                              ? prev.sound_effects.filter(s => s.effect_id !== sfx.id)
+                              : [...prev.sound_effects, { effect_id: sfx.id, timing: 0, volume: 0.7, asset: sfx }]
+                          }));
+                        }}
+                        disabled={isManifestLocked}
+                        className={`flex items-center justify-between p-3 rounded-xl border-2 transition-all ${
+                          isSelected
+                            ? 'border-yellow-500 bg-yellow-50'
+                            : 'border-gray-200 hover:border-yellow-300 bg-white'
+                        } ${isManifestLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                            isSelected ? 'bg-yellow-500 border-yellow-500' : 'border-gray-300'
+                          }`}>
+                            {isSelected && <CheckCircle2 className="w-4 h-4 text-white" />}
+                          </div>
+                          <div className="text-left">
+                            <p className="font-medium text-gray-900 text-sm">{sfx.asset_name}</p>
+                          </div>
+                        </div>
+                        <audio 
+                          controls 
+                          src={sfx.file_url} 
+                          className="h-8 w-32" 
+                          onClick={(e) => e.stopPropagation()} 
+                        />
+                      </button>
+                    );
+                  })}
+                  {(!availableAssets.sound_effects || availableAssets.sound_effects.length === 0) && (
+                    <p className="text-sm text-gray-500 italic col-span-2">No sound effects found in media-library/sound-effects bucket</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Product Demo Selection */}
+              <div className="border-t border-gray-200 pt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                      <Film className="w-5 h-5 text-indigo-600" />
+                    </div>
+                    <h4 className="text-lg font-semibold text-gray-900">
+                      Product Demo (Optional) {manifestSelections.product_demo && <span className="text-emerald-500">✓</span>}
+                    </h4>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    {availableAssets.product_demos?.length || 0} demos available
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {availableAssets.product_demos?.map((demo) => (
+                    <button
+                      key={demo.id}
+                      onClick={() => !isManifestLocked && setManifestSelections(prev => ({ 
+                        ...prev, 
+                        product_demo: prev.product_demo?.id === demo.id ? null : demo 
+                      }))}
+                      disabled={isManifestLocked}
+                      className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
+                        manifestSelections.product_demo?.id === demo.id
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:border-indigo-300'
+                      } ${isManifestLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                          manifestSelections.product_demo?.id === demo.id 
+                            ? 'bg-indigo-500 border-indigo-500' 
+                            : 'border-gray-300'
+                        }`}>
+                          {manifestSelections.product_demo?.id === demo.id && (
+                            <div className="w-2 h-2 bg-white rounded-full" />
+                          )}
+                        </div>
+                        <div className="text-left">
+                          <p className="font-medium text-gray-900">{demo.asset_name || demo.products?.name || 'Product Demo'}</p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                  {(!availableAssets.product_demos || availableAssets.product_demos.length === 0) && (
+                    <p className="text-sm text-gray-500 italic">No product demos found in media-library/product-demo-assets bucket</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Lock & Proceed Section */}
+              <div className="border-t border-gray-200 pt-8">
+                <div className="bg-gradient-to-br from-blue-100 to-purple-100 rounded-2xl p-6 border border-blue-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-lg font-bold text-gray-800 mb-1">
+                        {isManifestLocked ? '✅ Manifest Locked' : 'Ready to Generate?'}
+                      </h4>
+                      <p className="text-sm text-gray-700 font-medium">
+                        {isManifestLocked
+                          ? 'Your asset configuration is locked. The agent can now generate your video.'
+                          : allManifestAssetsSelected
+                            ? 'All required assets selected. Lock configuration and proceed to video generation.'
+                            : `Select all required assets: Videos (${[manifestSelections.visual_hook, manifestSelections.pain_story, manifestSelections.cta_closer].filter(Boolean).length}/3), Audio ✓, Music (${manifestSelections.background_music ? '1' : '0'}/1)`
+                        }
+                      </p>
+                      {manifestId && (
+                        <p className="text-xs text-gray-600 mt-1">Manifest ID: {manifestId}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {!isManifestLocked && (
+                        <>
+                          <input
+                            type="text"
+                            placeholder="Name your draft..."
+                            value={draftName}
+                            onChange={(e) => setDraftName(e.target.value)}
+                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-48 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            onClick={() => saveManifest(false)}
+                            disabled={isSavingManifest}
+                            className="flex items-center space-x-2 px-4 py-2 rounded-xl font-medium border border-gray-300 hover:bg-gray-50 transition-all"
+                          >
+                            <Save className="w-4 h-4" />
+                            <span>Save Draft</span>
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => isManifestLocked ? setIsManifestLocked(false) : saveManifest(true)}
+                        disabled={(!allManifestAssetsSelected && !isManifestLocked) || isSavingManifest}
+                        className={`flex items-center space-x-2 px-6 py-3 rounded-xl font-semibold transition-all ${
+                          isManifestLocked
+                            ? 'bg-amber-500 text-white hover:bg-amber-600'
+                            : allManifestAssetsSelected
+                              ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-lg'
+                              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {isSavingManifest ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <Lock className="w-5 h-5" />
+                        )}
+                        <span>{isManifestLocked ? 'Unlock to Edit' : 'Lock & Proceed'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Agent Endpoint Info - Show whenever we have a manifest saved */}
+                  {manifestId && (
+                    <div className="mt-4 p-4 bg-white/80 rounded-xl border border-gray-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-lg">🗺️</span>
+                        <p className="text-sm font-bold text-gray-800">Treasure Map for AI Agent</p>
+                        {isManifestLocked && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Locked & Ready</span>}
+                      </div>
+                      <p className="text-xs text-gray-600 mb-3">
+                        This endpoint provides all asset URLs the AI agent needs to generate your video:
+                      </p>
+                      <code className="text-xs bg-gray-900 text-green-400 px-3 py-2 rounded block overflow-x-auto font-mono">
+                        GET /api/agent/get-manifest?manifest_id={manifestId}
+                      </code>
+                      <div className="mt-3 text-xs text-gray-600 space-y-1">
+                        <p>✅ Sora video URLs (hook, pain story, CTA)</p>
+                        <p>✅ Voiceover audio URL</p>
+                        <p>✅ Background music URL</p>
+                        <p>✅ Sound effects with timings</p>
+                        <p>✅ Product demo URL (if selected)</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/api/agent/get-manifest?manifest_id=${manifestId}`);
+                          setManifestStatus('📋 Agent endpoint URL copied to clipboard!');
+                        }}
+                        className="mt-3 text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                      >
+                        📋 Copy Full URL
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -2850,6 +3435,7 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                 const Icon = tab.icon;
                 return (
                   <button
+                    type="button"
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
                     className={`flex-1 flex items-center justify-center space-x-2 px-6 py-4 rounded-2xl transition-all duration-300 ${
@@ -2872,6 +3458,8 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="space-y-8">
           {activeTab === 'script' && scriptCreationContent}
+          {activeTab === 'concept' && conceptContent}
+          {activeTab === 'videogen' && videoGenContent}
           {activeTab === 'video' && videoEditingContent}
           {activeTab === 'meta' && metaContent}
         </div>

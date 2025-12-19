@@ -244,3 +244,75 @@ CREATE INDEX IF NOT EXISTS idx_media_library_type ON media_library(asset_type);
 CREATE INDEX IF NOT EXISTS idx_product_demo_product ON product_demo_assets(product_id);
 CREATE INDEX IF NOT EXISTS idx_editor_packages_batch ON editor_packages(batch_id);
 
+-- ============================================
+-- 9. VIDEO ASSET MANIFESTS TABLE
+-- The "recipe card" for video editing agent
+-- Stores exact asset selections for video generation
+-- ============================================
+CREATE TABLE IF NOT EXISTS video_asset_manifests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id UUID REFERENCES production_batches(id) ON DELETE CASCADE,
+    
+    -- Sora Videos (specific IDs from sora_generations)
+    visual_hook_video_id UUID REFERENCES sora_generations(id),
+    pain_story_video_id UUID REFERENCES sora_generations(id),
+    cta_closer_video_id UUID REFERENCES sora_generations(id),
+    
+    -- Audio (the production_batch has the audio_url from ElevenLabs)
+    voiceover_batch_id UUID REFERENCES production_batches(id),
+    
+    -- Product Assets
+    product_demo_id UUID REFERENCES product_demo_assets(id),
+    
+    -- Media Library Selections
+    background_music_id UUID REFERENCES media_library(id),
+    sound_effects JSONB DEFAULT '[]'::jsonb, -- Array of {effect_id, timing, volume}
+    
+    -- Visual Settings
+    caption_style VARCHAR(50) DEFAULT 'bold_yellow',
+    transition_style VARCHAR(50) DEFAULT 'hard_cuts',
+    
+    -- Status
+    is_locked BOOLEAN DEFAULT false, -- When true, ready for generation
+    
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Unique constraint to prevent multiple manifests per batch
+    UNIQUE(batch_id)
+);
+
+-- Enable RLS
+ALTER TABLE video_asset_manifests ENABLE ROW LEVEL SECURITY;
+
+-- Allow all policy (can tighten later)
+CREATE POLICY "Allow all" ON video_asset_manifests FOR ALL USING (true);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_video_asset_manifests_batch ON video_asset_manifests(batch_id);
+CREATE INDEX IF NOT EXISTS idx_video_asset_manifests_locked ON video_asset_manifests(is_locked);
+
+-- Function to auto-update updated_at
+CREATE OR REPLACE FUNCTION update_video_asset_manifests_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_video_asset_manifests_updated_at ON video_asset_manifests;
+CREATE TRIGGER update_video_asset_manifests_updated_at
+    BEFORE UPDATE ON video_asset_manifests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_video_asset_manifests_updated_at();
+
+-- Example sound_effects JSONB structure:
+-- [
+--   { "effect_id": "uuid-whoosh-1", "timing": 0, "volume": 0.6 },
+--   { "effect_id": "uuid-slam", "timing": 1.5, "volume": 0.8 },
+--   { "effect_id": "uuid-camera", "timing": 12, "volume": 0.5 }
+-- ]
+
