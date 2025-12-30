@@ -316,3 +316,47 @@ CREATE TRIGGER update_video_asset_manifests_updated_at
 --   { "effect_id": "uuid-camera", "timing": 12, "volume": 0.5 }
 -- ]
 
+-- ============================================
+-- 10. VIDEO EDITING JOBS TABLE
+-- Tracks video generation job progress
+-- ============================================
+CREATE TABLE IF NOT EXISTS video_editing_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    manifest_id UUID REFERENCES video_asset_manifests(id) ON DELETE CASCADE,
+    status VARCHAR(50) DEFAULT 'queued', -- 'queued', 'downloading', 'processing', 'encoding', 'uploading', 'complete', 'failed'
+    progress INTEGER DEFAULT 0, -- 0-100
+    current_step VARCHAR(255),
+    final_video_url TEXT,
+    error_message TEXT,
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS
+ALTER TABLE video_editing_jobs ENABLE ROW LEVEL SECURITY;
+
+-- Allow all policy (can tighten later)
+CREATE POLICY "Allow all" ON video_editing_jobs FOR ALL USING (true);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_video_editing_jobs_manifest ON video_editing_jobs(manifest_id);
+CREATE INDEX IF NOT EXISTS idx_video_editing_jobs_status ON video_editing_jobs(status);
+
+-- Function to auto-update updated_at
+CREATE OR REPLACE FUNCTION update_video_editing_jobs_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_video_editing_jobs_updated_at ON video_editing_jobs;
+CREATE TRIGGER update_video_editing_jobs_updated_at
+    BEFORE UPDATE ON video_editing_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_video_editing_jobs_updated_at();
+

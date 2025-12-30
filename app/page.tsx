@@ -276,11 +276,41 @@ export default function SlopFactoryDashboard() {
   const [showDraftsPanel, setShowDraftsPanel] = useState(false);
   const [draftName, setDraftName] = useState('');
 
+  // Video Editing Job state
+  interface VideoEditingJob {
+    id: string;
+    manifest_id: string;
+    status: 'queued' | 'downloading' | 'processing' | 'encoding' | 'uploading' | 'complete' | 'failed';
+    progress: number;
+    current_step: string;
+    final_video_url: string | null;
+    error_message: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+  }
+  const [currentVideoJob, setCurrentVideoJob] = useState<VideoEditingJob | null>(null);
+  const [isStartingVideoGeneration, setIsStartingVideoGeneration] = useState(false);
+  const videoJobPollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Generated Ads state
+  interface GeneratedAd {
+    id: string;
+    manifest_id: string;
+    status: string;
+    final_video_url: string | null;
+    created_at: string;
+    completed_at: string | null;
+    draft_name?: string;
+  }
+  const [generatedAds, setGeneratedAds] = useState<GeneratedAd[]>([]);
+  const [isLoadingAds, setIsLoadingAds] = useState(false);
+
   const tabs = [
     { id: 'script', name: 'Research', icon: FileText },
     { id: 'concept', name: 'Concept', icon: Sparkles },
     { id: 'videogen', name: 'Video Gen', icon: Film },
     { id: 'video', name: 'Video Editing', icon: Video },
+    { id: 'ads', name: 'Generated Ads', icon: Play },
     { id: 'meta', name: 'Meta', icon: Facebook }
   ];
 
@@ -510,7 +540,47 @@ export default function SlopFactoryDashboard() {
       if (data.success) {
         setManifestId(data.manifest.id);
         setIsManifestLocked(data.manifest.is_locked);
-        setManifestStatus(lockAfterSave ? '✅ Manifest locked and ready for agent!' : '✅ Draft saved! Agent endpoint ready.');
+        
+        // If locking (Create Ad), send assets to n8n webhook for video editing
+        if (lockAfterSave) {
+          setManifestStatus('📤 Sending assets to video editor...');
+          try {
+            const webhookPayload = {
+              manifest_id: data.manifest.id,
+              draft_name: draftName || `Draft ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
+              assets: {
+                visual_hook_video: resolvedAssets.sora_videos.visual_hook?.url || null,
+                pain_story_video: resolvedAssets.sora_videos.pain_story?.url || null,
+                cta_closer_video: resolvedAssets.sora_videos.cta_closer?.url || null,
+                voiceover_audio: resolvedAssets.voiceover.url || null,
+                background_music: resolvedAssets.background_music?.url || null,
+                product_demo_video: resolvedAssets.product_demo?.url || null,
+                sound_effects: resolvedAssets.sound_effects.map(sfx => sfx.url).filter(Boolean)
+              },
+              settings: resolvedAssets.settings,
+              full_resolved_assets: resolvedAssets
+            };
+            
+            const webhookRes = await fetch('https://n8n.opulencefunnels.com/webhook/57a145a4-69ef-44df-bd73-d015c2523b19', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(webhookPayload)
+            });
+            
+            if (webhookRes.ok) {
+              setManifestStatus('✅ Ad created! Assets sent to video editor successfully.');
+            } else {
+              console.error('Webhook response not ok:', webhookRes.status);
+              setManifestStatus('✅ Manifest locked, but webhook delivery had issues. Check console.');
+            }
+          } catch (webhookError) {
+            console.error('Failed to send to n8n webhook:', webhookError);
+            setManifestStatus('✅ Manifest locked, but failed to send to video editor. Check console.');
+          }
+        } else {
+          setManifestStatus('✅ Draft saved! Agent endpoint ready.');
+        }
+        
         // Refresh saved drafts list
         loadSavedDrafts();
       } else {
@@ -536,6 +606,146 @@ export default function SlopFactoryDashboard() {
       console.error('Failed to load saved drafts:', e);
     }
   };
+
+  // Start video generation job
+  const startVideoGeneration = async () => {
+    if (!manifestId || !isManifestLocked) {
+      setManifestStatus('❌ Manifest must be locked first');
+      return;
+    }
+
+    setIsStartingVideoGeneration(true);
+    setManifestStatus('🎬 Starting video generation...');
+
+    try {
+      const res = await fetch('/api/video/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manifest_id: manifestId })
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.job_id) {
+        setCurrentVideoJob({
+          id: data.job_id,
+          manifest_id: manifestId,
+          status: 'queued',
+          progress: 0,
+          current_step: 'Queued for processing',
+          final_video_url: null,
+          error_message: null,
+          started_at: new Date().toISOString(),
+          completed_at: null
+        });
+
+        // Start polling for job status
+        startJobPolling(data.job_id);
+        setManifestStatus('🎬 Video generation started! Tracking progress...');
+      } else {
+        setManifestStatus(`❌ Failed to start: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Failed to start video generation:', error);
+      setManifestStatus('❌ Failed to start video generation');
+    } finally {
+      setIsStartingVideoGeneration(false);
+    }
+  };
+
+  // Poll for job status updates
+  const startJobPolling = (jobId: string) => {
+    // Clear any existing poll
+    if (videoJobPollRef.current) {
+      clearInterval(videoJobPollRef.current);
+    }
+
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(`/api/video/status?job_id=${jobId}`);
+        const data = await res.json();
+
+        if (data.success && data.job) {
+          setCurrentVideoJob(data.job);
+
+          // Update manifest status based on job status
+          if (data.job.status === 'complete') {
+            setManifestStatus('✅ Video generated successfully!');
+            if (videoJobPollRef.current) {
+              clearInterval(videoJobPollRef.current);
+              videoJobPollRef.current = null;
+            }
+          } else if (data.job.status === 'failed') {
+            setManifestStatus(`❌ Video generation failed: ${data.job.error_message || 'Unknown error'}`);
+            if (videoJobPollRef.current) {
+              clearInterval(videoJobPollRef.current);
+              videoJobPollRef.current = null;
+            }
+          } else {
+            setManifestStatus(`🎬 ${data.job.current_step} (${data.job.progress}%)`);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to poll job status:', error);
+      }
+    };
+
+    // Poll immediately, then every 2 seconds
+    pollStatus();
+    videoJobPollRef.current = setInterval(pollStatus, 2000);
+  };
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (videoJobPollRef.current) {
+        clearInterval(videoJobPollRef.current);
+      }
+    };
+  }, []);
+
+  // Load generated ads from video_editing_jobs table
+  const loadGeneratedAds = async () => {
+    setIsLoadingAds(true);
+    try {
+      const res = await fetch('/api/video/status');
+      const data = await res.json();
+      
+      if (data.success && data.jobs) {
+        // Filter to only completed jobs with video URLs, and enrich with manifest data
+        const completedAds = data.jobs.filter((job: GeneratedAd) => 
+          job.status === 'complete' && job.final_video_url
+        );
+        
+        // Try to get draft names from manifests
+        const enrichedAds = await Promise.all(completedAds.map(async (job: GeneratedAd) => {
+          try {
+            const manifestRes = await fetch(`/api/manifests?manifest_id=${job.manifest_id}`);
+            const manifestData = await manifestRes.json();
+            return {
+              ...job,
+              draft_name: manifestData.manifest?.draft_name || `Ad ${job.id.slice(0, 8)}`
+            };
+          } catch {
+            return { ...job, draft_name: `Ad ${job.id.slice(0, 8)}` };
+          }
+        }));
+        
+        setGeneratedAds(enrichedAds);
+      }
+    } catch (error) {
+      console.error('Failed to load generated ads:', error);
+    } finally {
+      setIsLoadingAds(false);
+    }
+  };
+
+  // Load ads when switching to ads tab
+  useEffect(() => {
+    if (activeTab === 'ads') {
+      loadGeneratedAds();
+    }
+  }, [activeTab]);
 
   // Load a specific draft and populate the selections
   const loadDraft = async (draftId: string) => {
@@ -3294,7 +3504,7 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                 </div>
               </div>
 
-              {/* Lock & Proceed Section */}
+              {/* Create Ad Section */}
               <div className="border-t border-gray-200 pt-8">
                 <div className="bg-gradient-to-br from-blue-100 to-purple-100 rounded-2xl p-6 border border-blue-200">
                   <div className="flex items-center justify-between">
@@ -3350,7 +3560,7 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                         ) : (
                           <Lock className="w-5 h-5" />
                         )}
-                        <span>{isManifestLocked ? 'Unlock to Edit' : 'Lock & Proceed'}</span>
+                        <span>{isManifestLocked ? 'Unlock to Edit' : 'Create Ad'}</span>
                       </button>
                     </div>
                   </div>
@@ -3387,11 +3597,268 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
                       </button>
                     </div>
                   )}
+
+                  {/* Video Generation Section - Show when manifest is locked */}
+                  {isManifestLocked && (
+                    <div className="mt-4 p-4 bg-white/80 rounded-xl border border-gray-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🎬</span>
+                          <p className="text-sm font-bold text-gray-800">In-App Video Generation</p>
+                          {currentVideoJob?.status === 'complete' && (
+                            <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Complete</span>
+                          )}
+                        </div>
+                        {!currentVideoJob && (
+                          <button
+                            onClick={startVideoGeneration}
+                            disabled={isStartingVideoGeneration}
+                            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-lg text-sm font-semibold hover:shadow-lg transition-all disabled:opacity-50"
+                          >
+                            {isStartingVideoGeneration ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Play className="w-4 h-4" />
+                            )}
+                            <span>Generate Video</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Progress Display */}
+                      {currentVideoJob && (
+                        <div className="space-y-3">
+                          {/* Progress Bar */}
+                          <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                            <div 
+                              className={`absolute left-0 top-0 h-full transition-all duration-500 ${
+                                currentVideoJob.status === 'complete' 
+                                  ? 'bg-emerald-500' 
+                                  : currentVideoJob.status === 'failed'
+                                    ? 'bg-red-500'
+                                    : 'bg-gradient-to-r from-blue-500 to-purple-500'
+                              }`}
+                              style={{ width: `${currentVideoJob.progress}%` }}
+                            />
+                            {currentVideoJob.status !== 'complete' && currentVideoJob.status !== 'failed' && (
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-pulse" />
+                            )}
+                          </div>
+
+                          {/* Status Text */}
+                          <div className="flex items-center justify-between text-sm">
+                            <span className={`font-medium ${
+                              currentVideoJob.status === 'complete' 
+                                ? 'text-emerald-600' 
+                                : currentVideoJob.status === 'failed'
+                                  ? 'text-red-600'
+                                  : 'text-gray-700'
+                            }`}>
+                              {currentVideoJob.current_step}
+                            </span>
+                            <span className="text-gray-500">{currentVideoJob.progress}%</span>
+                          </div>
+
+                          {/* Status Badge */}
+                          <div className="flex items-center gap-2">
+                            {currentVideoJob.status === 'downloading' && (
+                              <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Downloading Assets
+                              </span>
+                            )}
+                            {currentVideoJob.status === 'processing' && (
+                              <span className="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Processing Video
+                              </span>
+                            )}
+                            {currentVideoJob.status === 'encoding' && (
+                              <span className="inline-flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Encoding
+                              </span>
+                            )}
+                            {currentVideoJob.status === 'uploading' && (
+                              <span className="inline-flex items-center gap-1 text-xs bg-teal-100 text-teal-700 px-2 py-1 rounded-full">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Uploading
+                              </span>
+                            )}
+                            {currentVideoJob.status === 'complete' && (
+                              <span className="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">
+                                <CheckCircle className="w-3 h-3" />
+                                Complete
+                              </span>
+                            )}
+                            {currentVideoJob.status === 'failed' && (
+                              <span className="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">
+                                <AlertCircle className="w-3 h-3" />
+                                Failed
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Final Video */}
+                          {currentVideoJob.final_video_url && (
+                            <div className="mt-4 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+                              <p className="text-sm font-semibold text-emerald-800 mb-2">🎉 Your video is ready!</p>
+                              <video 
+                                src={currentVideoJob.final_video_url} 
+                                controls 
+                                className="w-full rounded-lg max-h-64"
+                              />
+                              <a
+                                href={currentVideoJob.final_video_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-2 inline-flex items-center gap-1 text-sm text-emerald-700 hover:text-emerald-800 font-medium"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                                Open in New Tab
+                              </a>
+                            </div>
+                          )}
+
+                          {/* Error Message */}
+                          {currentVideoJob.error_message && (
+                            <div className="mt-2 p-3 bg-red-50 rounded-lg border border-red-200">
+                              <p className="text-sm text-red-700">{currentVideoJob.error_message}</p>
+                              <button
+                                onClick={() => setCurrentVideoJob(null)}
+                                className="mt-2 text-xs text-red-600 hover:text-red-700 font-medium"
+                              >
+                                Dismiss & Try Again
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {!currentVideoJob && (
+                        <p className="text-xs text-gray-600">
+                          Click &quot;Generate Video&quot; to create your final ad using FFmpeg. This combines all your selected assets into a professional 60-70 second video.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+
+  const adsContent = (
+    <div className="space-y-8">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800">Generated Ads</h2>
+            <p className="text-gray-600">Preview and manage your created video ads</p>
+          </div>
+          <button
+            onClick={loadGeneratedAds}
+            disabled={isLoadingAds}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {isLoadingAds ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {isLoadingAds ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+            <span className="ml-3 text-gray-600">Loading your ads...</span>
+          </div>
+        ) : generatedAds.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <Video className="w-16 h-16 mx-auto mb-4 opacity-30" />
+            <h3 className="text-xl font-semibold text-gray-700 mb-2">No Ads Generated Yet</h3>
+            <p className="mb-4">Complete the video editing process to see your generated ads here.</p>
+            <button
+              onClick={() => setActiveTab('video')}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Go to Video Editing
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {generatedAds.map((ad) => (
+              <div
+                key={ad.id}
+                className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
+              >
+                {/* Video Preview */}
+                <div className="aspect-[9/16] bg-black relative">
+                  {ad.final_video_url ? (
+                    <video
+                      src={ad.final_video_url}
+                      controls
+                      className="w-full h-full object-contain"
+                      poster=""
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+                      <Video className="w-12 h-12" />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Ad Info */}
+                <div className="p-4">
+                  <h3 className="font-semibold text-gray-800 mb-1 truncate">
+                    {ad.draft_name || `Ad ${ad.id.slice(0, 8)}`}
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Created {new Date(ad.completed_at || ad.created_at).toLocaleDateString()} at{' '}
+                    {new Date(ad.completed_at || ad.created_at).toLocaleTimeString()}
+                  </p>
+                  
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={ad.final_video_url || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>Open</span>
+                    </a>
+                    <button
+                      onClick={() => {
+                        if (ad.final_video_url) {
+                          navigator.clipboard.writeText(ad.final_video_url);
+                          setManifestStatus('📋 Video URL copied to clipboard!');
+                        }
+                      }}
+                      className="px-3 py-2 bg-gray-200 text-gray-700 text-sm rounded-lg hover:bg-gray-300 transition-colors"
+                      title="Copy URL"
+                    >
+                      📋
+                    </button>
+                    <a
+                      href={ad.final_video_url || '#'}
+                      download={`${ad.draft_name || 'ad'}.mp4`}
+                      className="px-3 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors"
+                      title="Download"
+                    >
+                      ⬇️
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3461,6 +3928,7 @@ Example: Copy the full response from ChatGPT Deep Research including all the pai
           {activeTab === 'concept' && conceptContent}
           {activeTab === 'videogen' && videoGenContent}
           {activeTab === 'video' && videoEditingContent}
+          {activeTab === 'ads' && adsContent}
           {activeTab === 'meta' && metaContent}
         </div>
       </div>
